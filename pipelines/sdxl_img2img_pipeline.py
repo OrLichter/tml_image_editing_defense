@@ -10,7 +10,7 @@ from diffusers.utils import deprecate
 
 from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
 
-from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import StableDiffusionXLImg2ImgPipeline
+from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import StableDiffusionXLImg2ImgPipeline, retrieve_timesteps
 
 
 class NoiseTrainingPipeline(StableDiffusionXLImg2ImgPipeline):
