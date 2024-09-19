@@ -22,7 +22,7 @@ class Config:
     dataset_dir: str = "/home/dcor/orlichter/TML_project/data/single_image_dataset"
     target_image: str = "/home/dcor/orlichter/TML_project/data/shrug.jpg"
     default_prompt: str = "fuji pagoda"
-    target_prompt: str = "fuji pagoda"
+    target_prompt: str = "fuji pagoda in the snow"
     device: str = "cuda:0"
     batch_size: int = 1
     epochs: int = 1000
@@ -30,9 +30,10 @@ class Config:
     use_lora: bool = True
     validate_every_k_steps: int = 5
     l2_image_coeff: float = 1.0
-    l2_latent_coeff: float = 1e3
-    experiment_name: str = "target latents (1e3) & original image (1e0) (float32)"
+    l2_latent_coeff: float = 1e1
+    experiment_name: str = "pertubations on image | target latents (1e3) & original image (1e0) (float32)"
     seed: int = 0
+    apply_image_pertubation: bool = True
 
 
 @pyrallis.wrap()
@@ -78,7 +79,11 @@ def main(cfg: Config):
     pipe.text_encoder_2.requires_grad_(False)
     preview_vae.requires_grad_(False)
     
-    pertubation = torch.zeros(1, 4, 128, 128, device=cfg.device, dtype=torch_dtype, requires_grad=True)
+    if cfg.apply_image_pertubation:
+        pertubation = torch.zeros(1, 3, 1024, 1024, device=cfg.device, dtype=torch_dtype, requires_grad=True)
+    else:
+        pertubation = torch.zeros(1, 4, 128, 128, device=cfg.device, dtype=torch_dtype, requires_grad=True)
+
     optimizer = torch.optim.Adam([pertubation], lr=1e-3)
     
     generator = torch.manual_seed(0)
@@ -104,12 +109,17 @@ def main(cfg: Config):
                 break
             
             # Set up the batch
-            source_image, prompt = batch
+            source_image, _ = batch
             source_image = source_image.to(cfg.device, dtype=torch_dtype)
+            
+            if cfg.apply_image_pertubation:
+                output_image = source_image.clone()  # In the loss this makes the output_image the source image and vice versa
+                source_image += pertubation
 
             encoded_source_image = pipe.vae.encode(source_image).latent_dist.sample(generator) * pipe.vae.config.scaling_factor       
 
-            encoded_source_image += pertubation
+            if not cfg.apply_image_pertubation:
+                 encoded_source_image += pertubation
 
             noise = torch.randn_like(encoded_source_image)
             timesteps = torch.randint(0, pipe.scheduler.config.num_train_timesteps, (1,))
@@ -117,7 +127,7 @@ def main(cfg: Config):
 
             # Generate the outputs
             output_latents = pipe(
-                prompt=prompt[0],
+                prompt=cfg.target_prompt,
                 num_inference_steps=1,
                 generator=generator,
                 guidance_scale=guidance_scale,
@@ -126,7 +136,8 @@ def main(cfg: Config):
                 output_type="latent",
             ).images[0]
             
-            output_image = preview_vae.decode(encoded_source_image / preview_vae.config.scaling_factor, return_dict=False)[0]
+            if not cfg.apply_image_pertubation:
+                output_image = preview_vae.decode(encoded_source_image / preview_vae.config.scaling_factor, return_dict=False)[0]
             
             # Apply losses
             l2_distance_loss = l2_distance(output_image, source_image)
@@ -153,7 +164,7 @@ def main(cfg: Config):
             if step_counter % cfg.validate_every_k_steps == 0:
                 with torch.no_grad():
                     validation_image = pipe(
-                        prompt=prompt[0],
+                        prompt=cfg.target_prompt,
                         num_inference_steps=1,
                         generator=generator,
                         guidance_scale=guidance_scale,
