@@ -31,9 +31,9 @@ class Config:
     validate_every_k_steps: int = 5
     l2_image_coeff: float = 0.0
     l_inf_image_coeff: float = 1e5
-    l2_latent_coeff: float = 1e0
+    l2_latent_coeff: float = 1e3
     lr: float = 1e-2
-    experiment_name: str = "PGD | pertubations on image | target latents (1e0) & l_inf regularization (1e5) (float32) | lr 1e-2"
+    experiment_name: str = "PGD | pertubations on image | target latents (1e3) & l_inf regularization (1e5) (float32) | lr 1e-2"
     seed: int = 0
     apply_image_pertubation: bool = True
     
@@ -220,9 +220,9 @@ def main(cfg: Config):
                     validation_image = np.array(validation_image)
                     source_image = rearrange(source_image[0], "c h w -> h w c").cpu().numpy()
                     source_image = ((source_image / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)
-                    output_image = rearrange(output_image[0], "c h w -> h w c").detach().cpu().numpy()
-                    output_image = ((output_image / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)
-                    validation_image = np.hstack([source_image, output_image, validation_image])
+                    target_image = rearrange(target_image[0], "c h w -> h w c").detach().cpu().numpy()
+                    target_image = ((target_image / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)
+                    validation_image = np.hstack([source_image, target_image, validation_image])
                     validation_image = cv2.putText(validation_image, f"timestep: {timesteps[0].item()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
                     
                     wandb.log({"output_image": wandb.Image(validation_image)})    
