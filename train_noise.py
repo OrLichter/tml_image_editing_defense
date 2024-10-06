@@ -33,10 +33,15 @@ class Config:
     l_inf_image_coeff: float = 1e5
     l2_latent_coeff: float = 1e0
     lr: float = 1e-2
-    experiment_name: str = "pertubations on image | target latents (1e0) & l_inf regularization (1e5) (float32) | lr 1e-2"
+    experiment_name: str = "PGD | pertubations on image | target latents (1e0) & l_inf regularization (1e5) (float32) | lr 1e-2"
     seed: int = 0
     apply_image_pertubation: bool = True
-
+    
+    # Parameters taken from `super_l2` in  https://github.com/MadryLab/photoguard/blob/main/notebooks/demo_complex_attack_inpainting.ipynb
+    grad_reps: int = 1
+    eps: float = 16
+    step_size: float = 1
+    
 
 @pyrallis.wrap()
 def main(cfg: Config):
@@ -82,11 +87,11 @@ def main(cfg: Config):
     preview_vae.requires_grad_(False)
     
     if cfg.apply_image_pertubation:
-        pertubation = torch.zeros(1, 3, 1024, 1024, device=cfg.device, dtype=torch_dtype, requires_grad=True)
+        perturbation = torch.zeros(1, 3, 1024, 1024, device=cfg.device, dtype=torch_dtype, requires_grad=True)
     else:
-        pertubation = torch.zeros(1, 4, 128, 128, device=cfg.device, dtype=torch_dtype, requires_grad=True)
+        perturbation = torch.zeros(1, 4, 128, 128, device=cfg.device, dtype=torch_dtype, requires_grad=True)
 
-    optimizer = torch.optim.Adam([pertubation], lr=cfg.lr)
+    optimizer = torch.optim.Adam([perturbation], lr=cfg.lr)
     
     generator = torch.manual_seed(0)
     
@@ -115,47 +120,82 @@ def main(cfg: Config):
             source_image, _ = batch
             source_image = source_image.to(cfg.device, dtype=torch_dtype)
             
+            target_image = source_image.clone()  # In the loss this makes the output_image the source image and vice versa
+
             if cfg.apply_image_pertubation:
-                output_image = source_image.clone()  # In the loss this makes the output_image the source image and vice versa
-                source_image += pertubation
+                source_image += perturbation
 
             encoded_source_image = pipe.vae.encode(source_image).latent_dist.sample(generator) * pipe.vae.config.scaling_factor       
 
             if not cfg.apply_image_pertubation:
-                 encoded_source_image += pertubation
+                 encoded_source_image += perturbation
 
-            noise = torch.randn_like(encoded_source_image)
-            timesteps = torch.randint(0, pipe.scheduler.config.num_train_timesteps, (1,))
-            noisy_model_input = pipe.scheduler.add_noise(encoded_source_image, noise, timesteps)
+            all_grads = []
+            losses = []
+            
+            for _ in range(cfg.grad_reps):
+    
+                # Compute loss
+                noise = torch.randn_like(encoded_source_image)
+                timesteps = torch.randint(0, pipe.scheduler.config.num_train_timesteps, (1,))
+                noisy_model_input = pipe.scheduler.add_noise(encoded_source_image, noise, timesteps)
+                
+                output_latents = pipe(
+                    prompt=cfg.target_prompt,
+                    num_inference_steps=1,
+                    generator=generator,
+                    guidance_scale=guidance_scale,
+                    latents=noisy_model_input,
+                    timesteps=timesteps,
+                    output_type="latent",
+                ).images[0]
+                
+                if cfg.apply_image_pertubation:
+                    l2_distance_loss = l2_distance(source_image, target_image)
+                    l_inf_distance_loss = l_inf_distance(source_image, target_image)
+                    l2_latent_distance_loss = l2_latent_distance(output_latents, target_latents)
+                    
+                else:
+                    source_image = preview_vae.decode(encoded_source_image / preview_vae.config.scaling_factor, return_dict=False)[0]
 
-            # Generate the outputs
-            output_latents = pipe(
-                prompt=cfg.target_prompt,
-                num_inference_steps=1,
-                generator=generator,
-                guidance_scale=guidance_scale,
-                latents=noisy_model_input,
-                timesteps=timesteps,
-                output_type="latent",
-            ).images[0]
+                    # Apply losses
+                    l2_distance_loss = l2_distance(source_image, target_image)
+                    l_inf_distance_loss = l_inf_distance(source_image, target_image)
+                    l2_latent_distance_loss = l2_latent_distance(encoded_source_image, target_latents)
+                
+                loss = 0.
+                loss += l2_distance_loss * cfg.l2_image_coeff
+                loss += l_inf_distance_loss * cfg.l_inf_image_coeff
+                loss += l2_latent_distance_loss * cfg.l2_latent_coeff
+                
+                # Compute gradients
+                loss.backward()
+                all_grads.append(perturbation.grad.clone())
+                losses.append(loss.item())
+                
+                perturbation.grad.zero_()
             
-            if not cfg.apply_image_pertubation:
-                output_image = preview_vae.decode(encoded_source_image / preview_vae.config.scaling_factor, return_dict=False)[0]
+            # Average gradients
+            grad = torch.stack(all_grads).mean(0)
             
-            # Apply losses
-            l2_distance_loss = l2_distance(output_image, source_image)
-            l_inf_distance_loss = l_inf_distance(output_image, source_image)
-            l2_latent_distance_loss = l2_latent_distance(output_latents, target_latents)
+            pbar.set_description(f'AVG Loss: {np.mean(losses):.3f}')
             
-            loss = 0.            
-            loss += l2_distance_loss * cfg.l2_image_coeff
-            loss += l_inf_distance_loss * cfg.l_inf_image_coeff
-            loss += l2_latent_distance_loss * cfg.l2_latent_coeff
+            wandb.log({"avg_loss": np.mean(losses)})
             
-            # Optimization
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
+            # Normalize gradient
+            grad_norm = torch.norm(grad.view(grad.shape[0], -1), dim=1).view(-1, *([1] * (len(grad.shape) - 1)))
+            grad_normalized = grad / (grad_norm + 1e-10)
+            
+            # Update perturbation
+            perturbation.data = perturbation.data - grad_normalized * cfg.step_size
+            
+            # Project perturbation
+            perturbation.data = torch.clamp(perturbation.data, -cfg.eps, cfg.eps)
+            
+            # Ensure the perturbed image is within valid range
+            if cfg.apply_image_pertubation:
+                perturbed_image = torch.clamp(source_image + perturbation, -1, 1)
+                perturbation.data = perturbed_image - source_image
             
             # Logging
             wandb.log({
