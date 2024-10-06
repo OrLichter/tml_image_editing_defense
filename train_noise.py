@@ -22,16 +22,18 @@ class Config:
     dataset_dir: str = "/home/dcor/orlichter/TML_project/data/single_image_dataset"
     target_image: str = "/home/dcor/orlichter/TML_project/data/shrug.jpg"
     default_prompt: str = "fuji pagoda"
-    target_prompt: str = "fuji pagoda in the snow"
+    target_prompt: str = "fuji pagoda on fire"
     device: str = "cuda:0"
     batch_size: int = 1
-    epochs: int = 1000
-    max_steps: int = 1000
+    epochs: int = 2000
+    max_steps: int = 2000
     use_lora: bool = True
     validate_every_k_steps: int = 5
-    l2_image_coeff: float = 1.0
-    l2_latent_coeff: float = 1e1
-    experiment_name: str = "pertubations on image | target latents (1e3) & original image (1e0) (float32)"
+    l2_image_coeff: float = 0.0
+    l_inf_image_coeff: float = 1e5
+    l2_latent_coeff: float = 1e0
+    lr: float = 1e-2
+    experiment_name: str = "pertubations on image | target latents (1e0) & l_inf regularization (1e5) (float32) | lr 1e-2"
     seed: int = 0
     apply_image_pertubation: bool = True
 
@@ -84,7 +86,7 @@ def main(cfg: Config):
     else:
         pertubation = torch.zeros(1, 4, 128, 128, device=cfg.device, dtype=torch_dtype, requires_grad=True)
 
-    optimizer = torch.optim.Adam([pertubation], lr=1e-3)
+    optimizer = torch.optim.Adam([pertubation], lr=cfg.lr)
     
     generator = torch.manual_seed(0)
     
@@ -97,7 +99,8 @@ def main(cfg: Config):
     target_latents = vae.encode(target_image).latent_dist.sample(generator) * vae.config.scaling_factor
     
     # Define Losses
-    l2_distance = LpDistance(2)  
+    l2_distance = LpDistance(2)
+    l_inf_distance = LpDistance(float("inf"))
     l2_latent_distance = LpDistance(2)
         
     step_counter = -1
@@ -141,10 +144,12 @@ def main(cfg: Config):
             
             # Apply losses
             l2_distance_loss = l2_distance(output_image, source_image)
+            l_inf_distance_loss = l_inf_distance(output_image, source_image)
             l2_latent_distance_loss = l2_latent_distance(output_latents, target_latents)
             
             loss = 0.            
             loss += l2_distance_loss * cfg.l2_image_coeff
+            loss += l_inf_distance_loss * cfg.l_inf_image_coeff
             loss += l2_latent_distance_loss * cfg.l2_latent_coeff
             
             # Optimization
@@ -157,6 +162,7 @@ def main(cfg: Config):
                 "loss": loss.item(), 
                 "l2_latent_distance_loss": l2_latent_distance_loss.item(),
                 "l2_distance_loss": l2_distance_loss.item(),
+                "l_inf_distance_loss": l_inf_distance_loss.item(),
                 })
             pbar.set_postfix({"loss": loss.item()})
             
