@@ -139,7 +139,7 @@ class Trainer:
 
 		# Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
 		if self.cfg.limit_timesteps:
-			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
+			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 700], device=self.device)
 
 		# Get additional inputs if using SDXL
 		timestep_cond, added_cond_kwargs = None, None

@@ -52,7 +52,6 @@ INFERENCE_PROMPTS = [
 	"in space",
 	"covered in gold",
 	"on fire",
-
 	"frozen in ice",
 	"in space",
 	"as a black and white pencil sketch",
@@ -113,8 +112,8 @@ class TrainConfig:
 		self.source_image = Image.open(self.source_image_path).convert("RGB")
 		self.target_image = Image.open(self.target_image_path).convert("RGB")
 		if self.norm_type == "l2":
-			self.eps = 16
-			self.step_size = 1
+			self.eps = 32
+			self.step_size = 2
 			self.grad_reps = 10
 		else:
 			self.eps = 0.1
