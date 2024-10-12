@@ -22,23 +22,28 @@ class Config:
     dataset_dir: str = "/home/dcor/orlichter/TML_project/data/single_image_dataset"
     target_image: str = "/home/dcor/orlichter/TML_project/data/shrug.jpg"
     default_prompt: str = "fuji pagoda"
-    target_prompt: str = "fuji pagoda on fire"
+    edit_prompts: tuple = ("on fire",
+                          "in the style of van gogh", 
+                          "in the style of picasso",
+                          "in winter",
+                          "pencil drawing",
+                          "cubism")
     device: str = "cuda:0"
     batch_size: int = 1
     epochs: int = 2000
     max_steps: int = 2000
     use_lora: bool = True
     validate_every_k_steps: int = 5
-    l2_image_coeff: float = 0.0
-    l_inf_image_coeff: float = 1e5
-    l2_latent_coeff: float = 1e3
+    l2_image_coeff: float = 1e3
+    l_inf_image_coeff: float = 0e5
     lr: float = 1e-2
-    experiment_name: str = "PGD | pertubations on image | target latents (1e3) & l_inf regularization (1e5) (float32) | lr 1e-2"
+    experiment_name: str = "PGD | pertubations on image | l2_image_coeff (1e3) (float32) | grad reps 10"
     seed: int = 0
     apply_image_pertubation: bool = True
+    timestep_range: tuple = (300, 800)
     
     # Parameters taken from `super_l2` in  https://github.com/MadryLab/photoguard/blob/main/notebooks/demo_complex_attack_inpainting.ipynb
-    grad_reps: int = 1
+    grad_reps: int = 10
     eps: float = 16
     step_size: float = 1
     
@@ -86,10 +91,7 @@ def main(cfg: Config):
     pipe.text_encoder_2.requires_grad_(False)
     preview_vae.requires_grad_(False)
     
-    if cfg.apply_image_pertubation:
-        perturbation = torch.zeros(1, 3, 1024, 1024, device=cfg.device, dtype=torch_dtype, requires_grad=True)
-    else:
-        perturbation = torch.zeros(1, 4, 128, 128, device=cfg.device, dtype=torch_dtype, requires_grad=True)
+    perturbation = torch.zeros(1, 3, 1024, 1024, device=cfg.device, dtype=torch_dtype, requires_grad=True)
 
     optimizer = torch.optim.Adam([perturbation], lr=cfg.lr)
     
@@ -99,9 +101,9 @@ def main(cfg: Config):
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
     
     # Get target image
-    target_image = Image.open(cfg.target_image)
-    target_image = dataset.image_transforms(target_image).unsqueeze(0).to(cfg.device, dtype=torch_dtype)
-    target_latents = vae.encode(target_image).latent_dist.sample(generator) * vae.config.scaling_factor
+    # target_image = Image.open(cfg.target_image)
+    # target_image = dataset.image_transforms(target_image).unsqueeze(0).to(cfg.device, dtype=torch_dtype)
+    # target_latents = vae.encode(target_image).latent_dist.sample(generator) * vae.config.scaling_factor
     
     # Define Losses
     l2_distance = LpDistance(2)
@@ -117,31 +119,27 @@ def main(cfg: Config):
                 break
             
             # Set up the batch
-            source_image, _ = batch
+            source_image, original_prompt = batch
             source_image = source_image.to(cfg.device, dtype=torch_dtype)
             
-            target_image = source_image.clone()  # In the loss this makes the output_image the source image and vice versa
-
-            if cfg.apply_image_pertubation:
-                source_image += perturbation
-
-            encoded_source_image = pipe.vae.encode(source_image).latent_dist.sample(generator) * pipe.vae.config.scaling_factor       
-
-            if not cfg.apply_image_pertubation:
-                 encoded_source_image += perturbation
+            target_image = source_image.clone() 
 
             all_grads = []
             losses = []
             
             for _ in range(cfg.grad_reps):
-    
+                current_perturbation = perturbation.detach().requires_grad_()
+                pertubed_source_image = source_image + current_perturbation
+                encoded_pertubed_source_image = pipe.vae.encode(pertubed_source_image).latent_dist.sample(generator) * pipe.vae.config.scaling_factor       
+
                 # Compute loss
-                noise = torch.randn_like(encoded_source_image)
-                timesteps = torch.randint(0, pipe.scheduler.config.num_train_timesteps, (1,))
-                noisy_model_input = pipe.scheduler.add_noise(encoded_source_image, noise, timesteps)
+                noise = torch.randn_like(encoded_pertubed_source_image)
+                timesteps = torch.randint(cfg.timestep_range[0], cfg.timestep_range[1], (1,))
+                noisy_model_input = pipe.scheduler.add_noise(encoded_pertubed_source_image, noise, timesteps)
+                edit_prompt = original_prompt[0] + " " + np.random.choice(list(cfg.edit_prompts))
                 
                 output_latents = pipe(
-                    prompt=cfg.target_prompt,
+                    prompt=edit_prompt,
                     num_inference_steps=1,
                     generator=generator,
                     guidance_scale=guidance_scale,
@@ -150,31 +148,20 @@ def main(cfg: Config):
                     output_type="latent",
                 ).images[0]
                 
-                if cfg.apply_image_pertubation:
-                    l2_distance_loss = l2_distance(source_image, target_image)
-                    l_inf_distance_loss = l_inf_distance(source_image, target_image)
-                    l2_latent_distance_loss = l2_latent_distance(output_latents, target_latents)
-                    
-                else:
-                    source_image = preview_vae.decode(encoded_source_image / preview_vae.config.scaling_factor, return_dict=False)[0]
+                source_image = preview_vae.decode(output_latents[None] / preview_vae.config.scaling_factor, return_dict=False)[0]
 
-                    # Apply losses
-                    l2_distance_loss = l2_distance(source_image, target_image)
-                    l_inf_distance_loss = l_inf_distance(source_image, target_image)
-                    l2_latent_distance_loss = l2_latent_distance(encoded_source_image, target_latents)
+                l2_distance_loss = l2_distance(source_image, target_image)
+                l_inf_distance_loss = l_inf_distance(source_image, target_image)
                 
                 loss = 0.
                 loss += l2_distance_loss * cfg.l2_image_coeff
                 loss += l_inf_distance_loss * cfg.l_inf_image_coeff
-                loss += l2_latent_distance_loss * cfg.l2_latent_coeff
                 
                 # Compute gradients
-                loss.backward()
-                all_grads.append(perturbation.grad.clone())
+                grad = torch.autograd.grad(loss, current_perturbation)[0]
+                all_grads.append(grad)
                 losses.append(loss.item())
-                
-                perturbation.grad.zero_()
-            
+                            
             # Average gradients
             grad = torch.stack(all_grads).mean(0)
             
@@ -200,17 +187,16 @@ def main(cfg: Config):
             # Logging
             wandb.log({
                 "loss": loss.item(), 
-                "l2_latent_distance_loss": l2_latent_distance_loss.item(),
                 "l2_distance_loss": l2_distance_loss.item(),
                 "l_inf_distance_loss": l_inf_distance_loss.item(),
                 })
-            pbar.set_postfix({"loss": loss.item()})
+            pbar.set_postfix({"loss": np.mean(losses)})
             
             # Validation
             if step_counter % cfg.validate_every_k_steps == 0:
                 with torch.no_grad():
                     validation_image = pipe(
-                        prompt=cfg.target_prompt,
+                        prompt=edit_prompt,
                         num_inference_steps=1,
                         generator=generator,
                         guidance_scale=guidance_scale,
@@ -218,12 +204,12 @@ def main(cfg: Config):
                         timesteps=timesteps,
                     ).images[0]
                     validation_image = np.array(validation_image)
-                    source_image = rearrange(source_image[0], "c h w -> h w c").cpu().numpy()
-                    source_image = ((source_image / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)
+                    pertubed_source_image = rearrange(pertubed_source_image[0], "c h w -> h w c").cpu().numpy()
+                    pertubed_source_image = ((pertubed_source_image / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)
                     target_image = rearrange(target_image[0], "c h w -> h w c").detach().cpu().numpy()
                     target_image = ((target_image / 2 + 0.5).clip(0, 1) * 255).astype(np.uint8)
-                    validation_image = np.hstack([source_image, target_image, validation_image])
-                    validation_image = cv2.putText(validation_image, f"timestep: {timesteps[0].item()}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                    validation_image = np.hstack([pertubed_source_image, target_image, validation_image])
+                    validation_image = cv2.putText(validation_image, f"timestep: {timesteps[0].item()}\nprompt: {edit_prompt}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
                     
                     wandb.log({"output_image": wandb.Image(validation_image)})    
                 
