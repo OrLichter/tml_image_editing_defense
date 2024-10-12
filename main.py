@@ -11,7 +11,7 @@ from tqdm import tqdm
 import torchvision.transforms as T
 import time
 
-from configs import TrainConfig, InferenceConfig
+from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
 from data.dataset import ImagePromptDataset
 from losses import losses
 
@@ -22,7 +22,7 @@ class Trainer:
 		self.cfg = cfg
 		self.use_sdxl = use_sdxl
 		self.use_lcm = use_lcm
-		self.pipeline = self.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm)
+		self.pipeline = self.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float16)
 		self.device = torch.device("cuda")
 
 	def run(self) -> Image.Image:
@@ -76,13 +76,7 @@ class Trainer:
 		cur_image = cur_image.clone()
 		cur_image.requires_grad = True
 
-		start_time = time.time()
-		output_latent = self.attack_forward(
-			image=cur_image,
-			prompt=prompt,
-			num_inference_steps=self.cfg.n_denoising_steps_per_iteration
-		)
-		print(f"Attack forward time: {time.time() - start_time:.2f}s")
+		output_latent = self.attack_forward(image=cur_image, prompt=prompt)
 
 		# Compute general loss between output image and target image
 		output_image = None
@@ -108,11 +102,7 @@ class Trainer:
 
 	def attack_forward(self,
 					   prompt: Union[str, List[str]],
-					   image: Union[torch.Tensor, Image.Image],
-					   num_inference_steps: int = 40,
-					   guidance_scale: float = 7.5,
-					   eta: float = 0.0,
-					   limit_timesteps: bool = False) -> torch.Tensor:
+					   image: Union[torch.Tensor, Image.Image]) -> torch.Tensor:
 
 		# Encode the prompt
 		embeds = self._encode_prompt(prompt)
@@ -124,7 +114,7 @@ class Trainer:
 		image_latents = self.pipeline.vae.encode(image).latent_dist.sample() * 0.18215
 
 		# Get the timesteps to be used here
-		self.pipeline.scheduler.set_timesteps(num_inference_steps)
+		self.pipeline.scheduler.set_timesteps(self.cfg.n_denoising_steps_per_iteration)
 		timesteps_tensor = self.pipeline.scheduler.timesteps.to(self.device)
 
 		# Get additional inputs if using SDXL
@@ -132,8 +122,8 @@ class Trainer:
 		if self.use_sdxl:
 			added_cond_kwargs = self.get_sdxl_additional_inputs(
 				prompt_embeds=prompt_embeds,
-				pooled_prompt_embeds=pooled_prompt_embeds,
-				negative_pooled_prompt_embeds=negative_pooled_prompt_embeds
+				pooled_prompt_embeds=pooled_prompt_embeds.detach(),
+				negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.detach()
 			)
 
 		# Add noise to the input latent
@@ -141,21 +131,24 @@ class Trainer:
 		latents = self.pipeline.scheduler.add_noise(image_latents, noise, timesteps_tensor[:1])
 
 		# Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
-		if limit_timesteps:
+		if self.cfg.limit_timesteps:
 			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
+
+		extra_step_kwargs = {}
+		if 'eta' in inspect.signature(self.pipeline.scheduler.step).parameters:
+			extra_step_kwargs = {'eta': self.cfg.eta}
+
+		# Forward pass through the UNet
+		extra_kwargs = {
+			"timestep_cond": timestep_cond,
+			"cross_attention_kwargs": {},
+			"added_cond_kwargs": added_cond_kwargs,
+		} if self.use_sdxl else {}
 
 		for i, t in enumerate(timesteps_tensor):
 
 			latent_model_input = torch.cat([latents] * 2)
 			latent_model_input = self.pipeline.scheduler.scale_model_input(latent_model_input, t)
-
-			# Forward pass through the UNet
-			latent_model_input = latent_model_input if self.use_sdxl else latent_model_input
-			extra_kwargs = {
-				"timestep_cond": timestep_cond,
-				"cross_attention_kwargs": {},
-				"added_cond_kwargs": added_cond_kwargs,
-			} if self.use_sdxl else {}
 
 			noise_pred = self.pipeline.unet(
 				latent_model_input,
@@ -165,9 +158,7 @@ class Trainer:
 			).sample
 
 			noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-			noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-
-			extra_step_kwargs = {'eta': eta} if 'eta' in inspect.signature(self.pipeline.scheduler.step).parameters else {}
+			noise_pred = noise_pred_uncond + self.cfg.guidance_scale * (noise_pred_text - noise_pred_uncond)
 			latents = self.pipeline.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=True).prev_sample
 
 		latents = 1 / 0.18215 * latents
@@ -196,18 +187,16 @@ class Trainer:
 		return X_adv
 
 	@staticmethod
-	def load_models(use_sdxl: bool = True, use_lcm: bool = False) -> AutoPipelineForImage2Image:
+	def load_models(use_sdxl: bool = True,
+					use_lcm: bool = False,
+					dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
 		if use_sdxl:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
-				"stabilityai/stable-diffusion-xl-refiner-1.0",
-				torch_dtype=torch.float16,
-				variant="fp16",
-				use_safetensors=True
-			).to("cuda")
-			vae = AutoencoderKL.from_pretrained(
-				"madebyollin/sdxl-vae-fp16-fix",
-				torch_dtype=torch.float16
-			).to('cuda')
+				"stabilityai/stable-diffusion-xl-base-1.0",
+				torch_dtype=dtype,
+			)
+			pipeline = pipeline.to("cuda")
+			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16).to('cuda')
 			pipeline.vae = vae
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
@@ -216,15 +205,14 @@ class Trainer:
 		else:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
 				"runwayml/stable-diffusion-v1-5",
-				torch_dtype=torch.float16,
-			).to("cuda")
+				torch_dtype=dtype,
+			)
+			pipeline = pipeline.to("cuda")
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
 				pipeline.fuse_lora()
 
-		pipeline.enable_model_cpu_offload()
-		pipeline.enable_xformers_memory_efficient_attention()
 		return pipeline
 
 	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -242,7 +230,7 @@ class Trainer:
 				negative_pooled_prompt_embeds,
 			) = self.pipeline.encode_prompt(
 				prompt=prompt,
-				device=self.device,
+				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
 				negative_prompt="",
@@ -253,7 +241,7 @@ class Trainer:
 				negative_prompt_embeds,
 			) = self.pipeline.encode_prompt(
 				prompt=prompt,
-				device=self.device,
+				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
 				negative_prompt="",
@@ -319,7 +307,7 @@ class Inference:
 					  use_sdxl: bool = True,
 					  use_lcm: bool = False) -> List[Image.Image]:
 		""" Main inference loop """
-		pipeline = Trainer.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm)
+		pipeline = Trainer.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float32)
 		source_image = Image.open(cfg.source_image_path).convert("RGB")
 		target_image = Image.open(cfg.target_image_path).convert("RGB")
 		torch.manual_seed(cfg.seed)
@@ -360,26 +348,23 @@ if __name__ == '__main__':
 	use_lcm = False
 
 	# Source image path
-	# source_image_path = Path("data/images/japan.jpg")
-	source_image_path = Path("data/images/astronaut.png")
-	target_image_path = Path("data/images/stick-figure-sticker.jpg")
+	source_image_path = Path("data/images/japan.jpg")
+	target_image_path = Path("data/images/japan.jpg")
 	output_path = Path("/data/yuval/")
 
 	# # Part 1: Training
-	# train_cfg = TrainConfig(
-	# 	source_image_path=source_image_path,
-	# 	target_image_path=target_image_path,
-	# 	output_path=output_path,
-	# 	n_optimization_steps=10,
-	# )
-	# trainer = Trainer(
-	# 	cfg=train_cfg,
-	# 	use_sdxl=use_sdxl,
-	# 	use_lcm=use_lcm
-	# )
-	# adversarial_image = trainer.run()
-
-	adversarial_image = Image.open(source_image_path).convert("RGB")
+	train_cfg = TrainConfig(
+		source_image_path=source_image_path,
+		target_image_path=target_image_path,
+		output_path=output_path,
+		n_optimization_steps=200,
+	)
+	trainer = Trainer(
+		cfg=train_cfg,
+		use_sdxl=use_sdxl,
+		use_lcm=use_lcm
+	)
+	adversarial_image = trainer.run()
 
 	# Part 2: Inference
 	inference_cfg = InferenceConfig(
@@ -390,14 +375,10 @@ if __name__ == '__main__':
 		guidance_scale=5.0,
 		strength=0.6,
 	)
-	inference_prompts = [
-		# "fuji pagoda burning on fire"
-		"Astronaut in a jungle, cold color palette, muted colors, detailed, 8k"
-	]
 	Inference.run_inference(
 		cfg=inference_cfg,
 		adversarial_image=adversarial_image,
-		inference_prompts=inference_prompts,
+		inference_prompts=INFERENCE_PROMPTS,
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm
 	)

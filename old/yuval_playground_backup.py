@@ -17,7 +17,7 @@ from data.dataset import ImagePromptDataset
 
 to_pil = T.ToPILImage()
 
-USE_SDXL = True
+USE_SDXL = False
 USE_LCM = True
 
 if USE_SDXL:
@@ -133,6 +133,7 @@ def attack_forward(
         unet_latent_input = self.scheduler.scale_model_input(latent_model_input, t)
         # latent_model_input = torch.cat([latent_model_input, mask, image_latents], dim=1)
 
+        start_time = time.time()
         if USE_SDXL:
             noise_pred = self.unet(
                 unet_latent_input,
@@ -145,6 +146,7 @@ def attack_forward(
         else:
             noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=prompt_embeds).sample
 
+        print(f"UNet forward: {time.time() - start_time}")
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
@@ -173,11 +175,13 @@ def compute_grad(cur_image: torch.Tensor,
     cur_image = cur_image.clone()
     cur_image.requires_grad = True
     target_latent = kwargs.pop("target_latents", None)
+    start_time = time.time()
     output_latent = attack_forward(pipeline,
                                    image=cur_image,
                                    prompt=prompt,
                                    limit_timesteps=limit_timesteps,
                                    **kwargs)
+    print("Attack forward time: ", time.time() - start_time)
     output_image = None
     if apply_loss_on_images:
         output_image = pipeline.vae.decode(output_latent).sample
@@ -335,22 +339,62 @@ apply_loss_on_latents = True
 limit_timesteps = True
 perturbation_loss_lambda = 1.0
 
-prompts = [
-    ""
+PROMPTS_LIST = [
+    "",
+    "as a liquid",
+    "melting",
+    "as a lava",
+    "crumbling",
+    "as a lego",
+    "rusted and old",
+    "covered in gold",
+    "as a origami",
+    "made of of candy",
+    "as a hologram",
+    "as a neon sign",
+    "as a plush toy",
+    "exploded"
+
+    "on mars",
+    "on the moon",
+    "in a cartoon style",
+    "in a pixel art style",
+    "cubism painting",
+    "abstract painting",
+    "pencil drawing",
+    "oil painting",
+    "watercolor painting",
+    "ink drawing",
+    "pastel drawing",
+    "as if submerged underwater",
+    "in a dystopian world",
+    "in a utopian world",
+    "as a mosaic",
+    "in a desert",
+    "in a forest",
+    "in a city",
+    "in the style of picasso",
+    "in the style of van gogh",
+    "in the style of monet",
+    "in space",
+    "in a apocalypse",
+    "in a cyberpunk world",
+    "in a steampunk world",
+    "in a fantasy world",
 ]
 
 image_transforms = ImagePromptDataset.get_image_transforms()
 
-source_image_pil = Image.open('../data/images/japan.jpg').convert("RGB")
+source_image_pil = Image.open('./data/images/japan.jpg').convert("RGB")
 source_image = image_transforms(source_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
 
-target_image_path = "../data/images/stick-figure-sticker.jpg"
+target_image_path = "./data/images/stick-figure-sticker.jpg"
 target_image_pil = Image.open(target_image_path).convert("RGB")
 target_image_tensor = image_transforms(target_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
 
 result = super_linf(
     source_image,
-    prompts=prompts,
+    prompts=PROMPTS_LIST,
     target_image=target_image_tensor,
     eps=16,
     step_size=1,
