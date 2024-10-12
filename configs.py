@@ -91,11 +91,11 @@ class TrainConfig:
 
 	""" Various parameters for optimization"""
 	# Norm type
-	norm_type: str = "linf"  # or "linf"
+	norm_type: str = "linf"  # or "l2"
 	# Epsilon
-	eps: int = 16
+	eps: int = 0.1   # 16 for l2
 	# Step size
-	step_size: int = 1
+	step_size: int = 0.006  # 1 for l2
 	# Min value for clamp
 	min_value: int = -1
 	# Max value for clamp
@@ -103,7 +103,7 @@ class TrainConfig:
 	# Guidance scale for training
 	guidance_scale: float = 7.5
 	# Number of repetitions per iteration
-	grad_reps: int = 10
+	grad_reps: int = 5   # 10 for l2
 	# Eta value for scheduler
 	eta: float = 1.0
 

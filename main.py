@@ -43,7 +43,7 @@ class Trainer:
 		target_latent = self.pipeline.vae.encode(target_image).latent_dist.sample()
 		iterator = tqdm(range(self.cfg.n_optimization_steps))
 
-		for i in iterator:
+		for iteration in iterator:
 			all_grads = []
 			losses = []
 
@@ -70,7 +70,7 @@ class Trainer:
 			# Apply the perturbation step (either L2 or Linf)
 			X_adv = self.perturbation_step(X_adv, grad, source_image)
 
-			if i % self.cfg.image_visualization_interval == 0:
+			if iteration % self.cfg.image_visualization_interval == 0:
 				perturbation_image = (X_adv - source_image).clamp(0, 1)
 				logs.update({
 					"adversarial_image": wandb.Image(X_adv[0].cpu().numpy()),
@@ -166,7 +166,6 @@ class Trainer:
 		} if self.use_sdxl else {}
 
 		for i, t in enumerate(timesteps_tensor):
-
 			latent_model_input = torch.cat([latents] * 2)
 			latent_model_input = self.pipeline.scheduler.scale_model_input(latent_model_input, t)
 
@@ -179,7 +178,8 @@ class Trainer:
 
 			noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
 			noise_pred = noise_pred_uncond + self.cfg.guidance_scale * (noise_pred_text - noise_pred_uncond)
-			latents = self.pipeline.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=True).prev_sample
+			latents = self.pipeline.scheduler.step(noise_pred, t, latents, **extra_step_kwargs,
+												   return_dict=True).prev_sample
 
 		latents = 1 / 0.18215 * latents
 		return latents
@@ -216,7 +216,7 @@ class Trainer:
 				torch_dtype=dtype,
 			)
 			pipeline = pipeline.to("cuda")
-			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16).to('cuda')
+			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to('cuda')
 			pipeline.vae = vae
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
@@ -393,6 +393,8 @@ if __name__ == '__main__':
 	)
 	adversarial_image = trainer.run()
 	adversarial_image.save(output_path / "adversarial_image.png")
+
+	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 
 	# Part 2: Inference
 	inference_cfg = InferenceConfig(
