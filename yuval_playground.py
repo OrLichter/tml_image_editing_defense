@@ -5,16 +5,18 @@ import numpy as np
 
 import torch
 from tqdm import tqdm
-from diffusers import AutoPipelineForInpainting, LCMScheduler
+from diffusers import AutoPipelineForInpainting, LCMScheduler, AutoencoderKL
 import torchvision.transforms as T
 from typing import Union, List
+import torch.nn.functional as F
+
 
 from data.dataset import ImagePromptDataset
 
 to_pil = T.ToPILImage()
 
-USE_SDXL = False
-USE_LCM = False
+USE_SDXL = True
+USE_LCM = True
 
 if USE_SDXL:
     pipe_inpaint = AutoPipelineForInpainting.from_pretrained(
@@ -22,6 +24,8 @@ if USE_SDXL:
         torch_dtype=torch.float16,
     )
     pipe_inpaint = pipe_inpaint.to("cuda")
+    vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16).to('cuda')
+    pipe_inpaint.vae = vae
     if USE_LCM:
         pipe_inpaint.scheduler = LCMScheduler.from_config(pipe_inpaint.scheduler.config)
         pipe_inpaint.load_lora_weights("latent-consistency/lcm-lora-sdxl")
@@ -41,12 +45,13 @@ else:
 def attack_forward(
         self,
         prompt: Union[str, List[str]],
-        image: Union[torch.FloatTensor, Image.Image],
+        image: Union[torch.Tensor, Image.Image],
         height: int = 512,
         width: int = 512,
         num_inference_steps: int = 40,
         guidance_scale: float = 7.5,
         eta: float = 0.0,
+        limit_timesteps: bool = False,
 ):
 
     if USE_SDXL:
@@ -94,6 +99,10 @@ def attack_forward(
 
     self.scheduler.set_timesteps(num_inference_steps)
     timesteps_tensor = self.scheduler.timesteps.to(self.device)
+
+    # Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
+    if limit_timesteps:
+        timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
 
     timestep_cond, added_cond_kwargs = None, None
     if USE_SDXL:
@@ -147,33 +156,86 @@ def attack_forward(
         latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=True).prev_sample
 
     latents = 1 / 0.18215 * latents
-    image = self.vae.decode(latents).sample
-    # Image.fromarray(((image[0].cpu().detach().permute(1, 2, 0).numpy() + 1) * 127.5).astype(np.uint8)).save('/data/yuval/test.png')
-    return image
+    return latents
 
 
-def compute_grad(cur_image, prompt, target_image, **kwargs):
+def perturbation_loss(adv_image, source_image):
+    """ Compute L2 loss between the adversarial image and the source image. This keeps perturbations small. """
+    return F.mse_loss(adv_image, source_image)
+
+
+def compute_grad(cur_image: torch.Tensor,
+                 prompt: str,
+                 source_image: torch.Tensor,
+                 target_image: torch.Tensor,
+                 apply_loss_on_images: bool = True,
+                 apply_loss_on_latents: bool = False,
+                 limit_timesteps: bool = False,
+                 perturbation_loss_lambda: float = 0.0,
+                 **kwargs):
     torch.set_grad_enabled(True)
     cur_image = cur_image.clone()
     cur_image.requires_grad_()
-    image_nat = attack_forward(pipe_inpaint,
-                               image=cur_image,
-                               prompt=prompt,
-                               **kwargs)
-    loss = (image_nat - target_image).norm(p=2)
+    target_latent = kwargs.pop("target_latents", None)
+    output_latent = attack_forward(pipe_inpaint,
+                                   image=cur_image,
+                                   prompt=prompt,
+                                   limit_timesteps=limit_timesteps,
+                                   **kwargs)
+    output_image = None
+    if apply_loss_on_images:
+        output_image = pipe_inpaint.vae.decode(output_latent).sample
+        loss = (output_image - target_image).norm(p=2)
+    elif apply_loss_on_latents:
+        loss = (output_latent - target_latent).norm(p=2)
+    else:
+        raise ValueError("Please specify whether to apply loss on images or latents")
+
+    if perturbation_loss_lambda > 0:
+        if output_image is None:
+            output_image = pipe_inpaint.vae.decode(output_latent).sample
+        pert_loss = perturbation_loss(output_image, source_image)
+        loss += perturbation_loss_lambda * pert_loss
+
     grad = torch.autograd.grad(loss, [cur_image])[0]
-    return grad, loss.item(), image_nat.data.cpu()
+    # Image.fromarray(((image[0].cpu().detach().permute(1, 2, 0).numpy() + 1) * 127.5).astype(np.uint8))
+
+    return grad, loss.item()
 
 
-def super_l2(X, prompt, step_size, iters, eps, clamp_min, clamp_max, grad_reps=5, target_image=0, **kwargs):
+def super_l2(X: torch.Tensor,
+             prompts: List[str],
+             step_size: int,
+             iters: int,
+             eps: int,
+             clamp_min: int,
+             clamp_max: int,
+             grad_reps: int = 5,
+             target_image: Union[int, torch.Tensor] = 0,
+             apply_loss_on_images: bool = True,
+             apply_loss_on_latents: bool = False,
+             limit_timesteps: bool = False,
+             perturbation_loss_lambda: float = 0.0,
+             **kwargs):
     X_adv = X.clone()
+    target_latents = pipe_inpaint.vae.encode(target_image).latent_dist.sample()
     iterator = tqdm(range(iters))
-    for i in iterator:
-
+    for _ in iterator:
         all_grads = []
         losses = []
         for i in range(grad_reps):
-            c_grad, loss, last_image = compute_grad(X_adv, prompt, target_image=target_image, **kwargs)
+            # Randomly sample one of the prompts in the set
+            prompt = prompts[np.random.randint(0, len(prompts))]
+            c_grad, loss = compute_grad(X_adv,
+                                        prompt,
+                                        source_image=X,
+                                        target_image=target_image,
+                                        apply_loss_on_images=apply_loss_on_images,
+                                        apply_loss_on_latents=apply_loss_on_latents,
+                                        target_latents=target_latents,
+                                        limit_timesteps=limit_timesteps,
+                                        perturbation_loss_lambda=perturbation_loss_lambda,
+                                        **kwargs)
             all_grads.append(c_grad)
             losses.append(loss)
         grad = torch.stack(all_grads).mean(0)
@@ -195,17 +257,45 @@ def super_l2(X, prompt, step_size, iters, eps, clamp_min, clamp_max, grad_reps=5
     return X_adv
 
 
-def super_linf(X, prompt, step_size, iters, eps, clamp_min, clamp_max, grad_reps=5, target_image=0, **kwargs):
+def super_linf(X: torch.Tensor,
+               prompts: List[str],
+               step_size: int,
+               iters: int,
+               eps: int,
+               clamp_min: int,
+               clamp_max: int,
+               grad_reps: int = 5,
+               target_image: Union[int, torch.Tensor] = 0,
+               apply_loss_on_images: bool = True,
+               apply_loss_on_latents: bool = False,
+               limit_timesteps: bool = False,
+               perturbation_loss_lambda: float = 0.0,
+               **kwargs):
     X_adv = X.clone()
+    target_latents = pipe_inpaint.vae.encode(target_image).latent_dist.sample()
     iterator = tqdm(range(iters))
-    for i in iterator:
+    for _ in iterator:
 
         all_grads = []
         losses = []
         for i in range(grad_reps):
-            c_grad, loss, last_image = compute_grad(X_adv, prompt, target_image=target_image, **kwargs)
+
+            # Randomly sample one of the prompts in the set
+            prompt = prompts[np.random.randint(0, len(prompts))]
+
+            c_grad, loss = compute_grad(X_adv,
+                                        prompt,
+                                        source_image=X,
+                                        target_image=target_image,
+                                        apply_loss_on_images=apply_loss_on_images,
+                                        apply_loss_on_latents=apply_loss_on_latents,
+                                        target_latents=target_latents,
+                                        limit_timesteps=limit_timesteps,
+                                        perturbation_loss_lambda=perturbation_loss_lambda,
+                                        **kwargs)
             all_grads.append(c_grad)
             losses.append(loss)
+
         grad = torch.stack(all_grads).mean(0)
 
         iterator.set_description_str(f'AVG Loss: {np.mean(losses):.3f}')
@@ -237,24 +327,33 @@ def _get_add_time_ids(unet, original_size=(512, 512), crops_coords_top_left=(0, 
     return add_time_ids
 
 
-prompt = ""
 SEED = 786349
 torch.manual_seed(SEED)
 
 num_inference_steps = 4
 iters = 200
 
-dataset = ImagePromptDataset("./data/single_image_dataset", default_prompt=prompt)
+apply_loss_on_images = False
+apply_loss_on_latents = True
+limit_timesteps = True
+perturbation_loss_lambda = 1.0
+
+prompts = [
+    ""
+]
+
+image_transforms = ImagePromptDataset.get_image_transforms()
+
 source_image_pil = Image.open('data/single_image_dataset/japan.jpg').convert("RGB")
-source_image = dataset.image_transforms(source_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
+source_image = image_transforms(source_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
 
 target_image_path = "./data/stick-figure-sticker.jpg"
 target_image_pil = Image.open(target_image_path).convert("RGB")
-target_image_tensor = dataset.image_transforms(target_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
+target_image_tensor = image_transforms(target_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
 
 result = super_linf(
     source_image,
-    prompt=prompt,
+    prompts=prompts,
     target_image=target_image_tensor,
     eps=16,
     step_size=1,
@@ -264,7 +363,11 @@ result = super_linf(
     eta=1.,
     num_inference_steps=num_inference_steps,
     guidance_scale=7.5,
-    grad_reps=10
+    grad_reps=10,
+    apply_loss_on_images=apply_loss_on_images,
+    apply_loss_on_latents=apply_loss_on_latents,
+    limit_timesteps=limit_timesteps,
+    perturbation_loss_lambda=perturbation_loss_lambda,
 )
 adv_X = (result / 2 + 0.5).clamp(0, 1)
 adv_image = to_pil(adv_X[0]).convert("RGB")
@@ -274,8 +377,8 @@ adv_image = to_pil(adv_X[0]).convert("RGB")
 prompt = "a fuji pagoda on fire"
 SEED = 9209
 strength = 0.7
-guidance_scale = 7.5
-num_inference_steps = 100
+guidance_scale = 7.5 if not USE_LCM else 4.0
+num_inference_steps = 100 if not USE_LCM else 4
 
 # Make the mask all ones using PIL
 mask_image = Image.new("RGB", (512, 512), (255, 255, 255))

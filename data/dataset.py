@@ -3,11 +3,19 @@ from torchvision import transforms
 from PIL import Image
 from pathlib import Path
 
+
 class ImagePromptDataset(Dataset):
-    def __init__(self, image_dir: str, default_prompt: str, center_crop: bool = False):
+    def __init__(self, image_dir: str, default_prompt: str):
         self.images = []
         self.default_prompt = default_prompt
-        self.image_transforms = transforms.Compose(
+        self.image_transforms = self.get_image_transforms()
+        
+        for image_path in Path(image_dir).rglob('*.jpg'):
+            self.images.append(Image.open(image_path))
+
+    @staticmethod
+    def get_image_transforms():
+        return transforms.Compose(
             [
                 transforms.Resize(512, interpolation=transforms.InterpolationMode.BILINEAR),
                 transforms.CenterCrop(512),
@@ -15,10 +23,7 @@ class ImagePromptDataset(Dataset):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
-        
-        for image_path in Path(image_dir).rglob('*.jpg'):
-            self.images.append(Image.open(image_path))
-    
+
     def __len__(self):
         return len(self.images)
 
