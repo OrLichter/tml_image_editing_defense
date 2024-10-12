@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn.functional as F
 from typing import List, Union
 
 
@@ -34,3 +34,8 @@ class CosineSimilarity:
     """
     def __call__(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return (torch.nn.functional.cosine_similarity(x, y) + 1).mean()
+
+
+def perturbation_loss(adv_image, source_image):
+    """ Compute L2 loss between the adversarial image and the source image. This keeps perturbations small. """
+    return F.mse_loss(adv_image, source_image)
