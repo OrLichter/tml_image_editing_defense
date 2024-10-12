@@ -3,9 +3,11 @@ import inspect
 from PIL import Image
 import numpy as np
 
+import time
 import torch
+from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
-from diffusers import AutoPipelineForInpainting, LCMScheduler, AutoencoderKL
+from diffusers import AutoPipelineForInpainting, AutoPipelineForImage2Image, LCMScheduler, AutoencoderKL
 import torchvision.transforms as T
 from typing import Union, List
 import torch.nn.functional as F
@@ -19,27 +21,31 @@ USE_SDXL = True
 USE_LCM = True
 
 if USE_SDXL:
-    pipe_inpaint = AutoPipelineForInpainting.from_pretrained(
-        "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+    # pipeline = AutoPipelineForInpainting.from_pretrained(
+    pipeline = AutoPipelineForImage2Image.from_pretrained(
+        # "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+        "stabilityai/stable-diffusion-xl-base-1.0",
         torch_dtype=torch.float16,
     )
-    pipe_inpaint = pipe_inpaint.to("cuda")
+    pipeline = pipeline.to("cuda")
     vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16).to('cuda')
-    pipe_inpaint.vae = vae
+    pipeline.vae = vae
     if USE_LCM:
-        pipe_inpaint.scheduler = LCMScheduler.from_config(pipe_inpaint.scheduler.config)
-        pipe_inpaint.load_lora_weights("latent-consistency/lcm-lora-sdxl")
-        pipe_inpaint.fuse_lora()
+        pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
+        pipeline.load_lora_weights("latent-consistency/lcm-lora-sdxl")
+        pipeline.fuse_lora()
 else:
-    pipe_inpaint = AutoPipelineForInpainting.from_pretrained(
-        "runwayml/stable-diffusion-inpainting",
+    # pipeline = AutoPipelineForInpainting.from_pretrained(
+    pipeline = AutoPipelineForImage2Image.from_pretrained(
+        # "runwayml/stable-diffusion-inpainting",
+        "runwayml/stable-diffusion-v1-5",
         torch_dtype=torch.float16,
     )
-    pipe_inpaint = pipe_inpaint.to("cuda")
+    pipeline = pipeline.to("cuda")
     if USE_LCM:
-        pipe_inpaint.scheduler = LCMScheduler.from_config(pipe_inpaint.scheduler.config)
-        pipe_inpaint.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
-        pipe_inpaint.fuse_lora()
+        pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
+        pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
+        pipeline.fuse_lora()
 
 
 def attack_forward(
@@ -83,26 +89,10 @@ def attack_forward(
     prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
     prompt_embeds = prompt_embeds.detach()
 
-    num_channels_latents = self.vae.config.latent_channels
-
-    latents_shape = (1, num_channels_latents, height // 8, width // 8)
-    latents = torch.randn(latents_shape, device=self.device, dtype=prompt_embeds.dtype)
-
-    masked_image_latents = self.vae.encode(image).latent_dist.sample()
-    masked_image_latents = 0.18215 * masked_image_latents
-    masked_image_latents = torch.cat([masked_image_latents] * 2)
-
-    mask = torch.ones_like(latents)[:, :1]
-    mask = torch.cat([mask] * 2)
-
-    latents = latents * self.scheduler.init_noise_sigma
+    image_latents = self.vae.encode(image).latent_dist.sample() * 0.18215
 
     self.scheduler.set_timesteps(num_inference_steps)
     timesteps_tensor = self.scheduler.timesteps.to(self.device)
-
-    # Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
-    if limit_timesteps:
-        timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
 
     timestep_cond, added_cond_kwargs = None, None
     if USE_SDXL:
@@ -129,17 +119,23 @@ def attack_forward(
         add_time_ids = torch.cat([add_neg_time_ids, add_time_ids], dim=0)
         added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids.to('cuda')}
 
-    prompt_embeds = prompt_embeds.detach()
+    shape = image_latents.shape
+    noise = randn_tensor(shape, device=self.device, dtype=torch.float16)
+    latents = self.scheduler.add_noise(image_latents, noise, timesteps_tensor[:1])
+
+    # Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
+    if limit_timesteps:
+        timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
 
     for i, t in enumerate(timesteps_tensor):
 
         latent_model_input = torch.cat([latents] * 2)
-        latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-        latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
+        unet_latent_input = self.scheduler.scale_model_input(latent_model_input, t)
+        # latent_model_input = torch.cat([latent_model_input, mask, image_latents], dim=1)
 
         if USE_SDXL:
             noise_pred = self.unet(
-                latent_model_input,
+                unet_latent_input,
                 t,
                 encoder_hidden_states=prompt_embeds,
                 timestep_cond=timestep_cond,
@@ -175,31 +171,32 @@ def compute_grad(cur_image: torch.Tensor,
                  **kwargs):
     torch.set_grad_enabled(True)
     cur_image = cur_image.clone()
-    cur_image.requires_grad_()
+    cur_image.requires_grad = True
     target_latent = kwargs.pop("target_latents", None)
-    output_latent = attack_forward(pipe_inpaint,
+    output_latent = attack_forward(pipeline,
                                    image=cur_image,
                                    prompt=prompt,
                                    limit_timesteps=limit_timesteps,
                                    **kwargs)
     output_image = None
     if apply_loss_on_images:
-        output_image = pipe_inpaint.vae.decode(output_latent).sample
-        loss = (output_image - target_image).norm(p=2)
+        output_image = pipeline.vae.decode(output_latent).sample
+        rec_loss = (output_image - target_image).norm(p=2)
     elif apply_loss_on_latents:
-        loss = (output_latent - target_latent).norm(p=2)
+        rec_loss = (output_latent - target_latent).norm(p=2)
     else:
         raise ValueError("Please specify whether to apply loss on images or latents")
 
     if perturbation_loss_lambda > 0:
         if output_image is None:
-            output_image = pipe_inpaint.vae.decode(output_latent).sample
+            output_image = pipeline.vae.decode(output_latent).sample
         pert_loss = perturbation_loss(output_image, source_image)
-        loss += perturbation_loss_lambda * pert_loss
+        loss = rec_loss + perturbation_loss_lambda * pert_loss
+    else:
+        loss = rec_loss
 
-    grad = torch.autograd.grad(loss, [cur_image])[0]
+    grad = torch.autograd.grad(loss, [cur_image], retain_graph=True, allow_unused=True)[0]
     # Image.fromarray(((image[0].cpu().detach().permute(1, 2, 0).numpy() + 1) * 127.5).astype(np.uint8))
-
     return grad, loss.item()
 
 
@@ -218,7 +215,7 @@ def super_l2(X: torch.Tensor,
              perturbation_loss_lambda: float = 0.0,
              **kwargs):
     X_adv = X.clone()
-    target_latents = pipe_inpaint.vae.encode(target_image).latent_dist.sample()
+    target_latents = pipeline.vae.encode(target_image).latent_dist.sample()
     iterator = tqdm(range(iters))
     for _ in iterator:
         all_grads = []
@@ -272,7 +269,7 @@ def super_linf(X: torch.Tensor,
                perturbation_loss_lambda: float = 0.0,
                **kwargs):
     X_adv = X.clone()
-    target_latents = pipe_inpaint.vae.encode(target_image).latent_dist.sample()
+    target_latents = pipeline.vae.encode(target_image).latent_dist.sample()
     iterator = tqdm(range(iters))
     for _ in iterator:
 
@@ -344,10 +341,10 @@ prompts = [
 
 image_transforms = ImagePromptDataset.get_image_transforms()
 
-source_image_pil = Image.open('data/single_image_dataset/japan.jpg').convert("RGB")
+source_image_pil = Image.open('../data/images/japan.jpg').convert("RGB")
 source_image = image_transforms(source_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
 
-target_image_path = "./data/stick-figure-sticker.jpg"
+target_image_path = "../data/images/stick-figure-sticker.jpg"
 target_image_pil = Image.open(target_image_path).convert("RGB")
 target_image_tensor = image_transforms(target_image_pil).unsqueeze(0).to('cuda', dtype=torch.float16)
 
@@ -374,9 +371,9 @@ adv_image = to_pil(adv_X[0]).convert("RGB")
 
 """ Inference time """
 
-prompt = "a fuji pagoda on fire"
+prompt = "a fuji pagoda burning on fire"
 SEED = 9209
-strength = 0.7
+strength = 0.6
 guidance_scale = 7.5 if not USE_LCM else 4.0
 num_inference_steps = 100 if not USE_LCM else 4
 
@@ -384,7 +381,7 @@ num_inference_steps = 100 if not USE_LCM else 4
 mask_image = Image.new("RGB", (512, 512), (255, 255, 255))
 
 torch.manual_seed(SEED)
-image_nat = pipe_inpaint(prompt=prompt,
+image_nat = pipeline(prompt=prompt,
                          image=source_image_pil,
                          mask_image=mask_image,
                          eta=1,
@@ -392,7 +389,7 @@ image_nat = pipe_inpaint(prompt=prompt,
                          guidance_scale=guidance_scale,
                          strength=strength).images[0]
 torch.manual_seed(SEED)
-image_adv = pipe_inpaint(prompt=prompt,
+image_adv = pipeline(prompt=prompt,
                          image=adv_image,
                          mask_image=mask_image,
                          eta=1,

@@ -47,7 +47,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--train_data_dir",
         type=str,
-        default="/home/dcor/orlichter/TML_project/data/single_image_dataset",
+        default="/home/dcor/orlichter/TML_project/data/images",
         help=(
             "A folder containing the training data. Folder contents must follow the structure described in"
             " https://huggingface.co/docs/datasets/image_dataset#imagefolder. In particular, a `metadata.jsonl` file"

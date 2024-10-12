@@ -19,7 +19,7 @@ from losses.losses import LpRegularization, LpDistance, CosineSimilarity
 
 @dataclass
 class Config:
-	dataset_dir: str = "/home/dcor/orlichter/TML_project/data/single_image_dataset"
+	dataset_dir: str = "/home/dcor/orlichter/TML_project/data/images"
 	target_image: str = "/home/dcor/orlichter/TML_project/data/shrug.jpg"
 	default_prompt: str = "fuji pagoda"
 	target_prompt: str = "fuji pagoda on fire"
