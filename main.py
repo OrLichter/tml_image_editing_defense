@@ -1,15 +1,17 @@
+import dataclasses
 import inspect
+import os
 from pathlib import Path
 from typing import List, Tuple, Union
 
 import numpy as np
 import torch
+import wandb
 from PIL import Image
 from diffusers import AutoPipelineForImage2Image, AutoencoderKL, LCMScheduler
 from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 import torchvision.transforms as T
-import time
 
 from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
 from data.dataset import ImagePromptDataset
@@ -27,6 +29,13 @@ class Trainer:
 
 	def run(self) -> Image.Image:
 		""" Main training loop """
+		wandb.init(
+			project="TML Project",
+			config=dataclasses.asdict(self.cfg),
+			name=self.cfg.experiment_name,
+		)
+		wandb.save(os.path.basename(__file__))
+
 		source_image, target_image = self._process_images()
 
 		X_adv = source_image.clone()
@@ -34,7 +43,7 @@ class Trainer:
 		target_latent = self.pipeline.vae.encode(target_image).latent_dist.sample()
 		iterator = tqdm(range(self.cfg.n_optimization_steps))
 
-		for _ in iterator:
+		for i in iterator:
 			all_grads = []
 			losses = []
 
@@ -56,14 +65,25 @@ class Trainer:
 
 			# Display average loss
 			iterator.set_description_str(f'AVG Loss: {np.mean(losses):.3f}')
+			logs = {"avg_loss": np.mean(losses)}
 
 			# Apply the perturbation step (either L2 or Linf)
 			X_adv = self.perturbation_step(X_adv, grad, source_image)
+
+			if i % self.cfg.image_visualization_interval == 0:
+				perturbation_image = (X_adv - source_image).clamp(0, 1)
+				logs.update({
+					"adversarial_image": wandb.Image(X_adv[0].cpu().numpy()),
+					"diff_image": wandb.Image(perturbation_image[0].cpu().numpy()),
+				})
+
+			wandb.log(logs)
 
 		torch.cuda.empty_cache()
 
 		X_adv = (X_adv / 2 + 0.5).clamp(0, 1)
 		adversarial_image = T.ToPILImage()(X_adv[0]).convert("RGB")
+		wandb.log({"final_adversarial_image": wandb.Image(adversarial_image)})
 		return adversarial_image
 
 	def compute_grad(self,
@@ -307,6 +327,12 @@ class Inference:
 					  use_sdxl: bool = True,
 					  use_lcm: bool = False) -> List[Image.Image]:
 		""" Main inference loop """
+		wandb.init(
+			project="TML Project",
+			config=dataclasses.asdict(cfg),
+			name=cfg.experiment_name,
+		)
+
 		pipeline = Trainer.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float32)
 		source_image = Image.open(cfg.source_image_path).convert("RGB")
 		target_image = Image.open(cfg.target_image_path).convert("RGB")
@@ -339,6 +365,7 @@ class Inference:
 			joined_image = Image.fromarray(np.concatenate(images, axis=1))
 			save_name = "-".join(prompt[:30].split())
 			joined_image.save(cfg.output_path / f"{save_name}.png")
+			wandb.log({f"val_images": wandb.Image(joined_image, caption=prompt)})
 			output_images.append(joined_image)
 		return output_images
 
@@ -365,6 +392,7 @@ if __name__ == '__main__':
 		use_lcm=use_lcm
 	)
 	adversarial_image = trainer.run()
+	adversarial_image.save(output_path / "adversarial_image.png")
 
 	# Part 2: Inference
 	inference_cfg = InferenceConfig(

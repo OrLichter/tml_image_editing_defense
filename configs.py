@@ -7,6 +7,7 @@ from PIL import Image
 
 PROMPTS_LIST = [
 	"",
+	"on fire",
 	"as a liquid",
 	"melting",
 	"as a lava",
@@ -49,7 +50,11 @@ PROMPTS_LIST = [
 	"in a fantasy world",
 ]
 INFERENCE_PROMPTS = [
+
+	"in space",
+	"covered in gold",
 	"on fire",
+
 	"frozen in ice",
 	"in space",
 	"as a black and white pencil sketch",
@@ -65,6 +70,8 @@ class TrainConfig:
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
 	# Output path
 	output_path: Path = Path("./output")
+	# Experiment name
+	experiment_name: str = 'experiment'
 	# Number of steps for optimization
 	n_optimization_steps: int = 200
 	# Number of denoising steps per iteration during optimization
@@ -84,7 +91,7 @@ class TrainConfig:
 
 	""" Various parameters for optimization"""
 	# Norm type
-	norm_type: str = "l2"  # or "linf"
+	norm_type: str = "linf"  # or "linf"
 	# Epsilon
 	eps: int = 16
 	# Step size
@@ -100,6 +107,9 @@ class TrainConfig:
 	# Eta value for scheduler
 	eta: float = 1.0
 
+	""" For visualization purposes """
+	image_visualization_interval: int = 25
+
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
 		self.source_image = Image.open(self.source_image_path).convert("RGB")
@@ -114,6 +124,8 @@ class InferenceConfig:
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
 	# Output path
 	output_path: Path = Path("./output")
+	# Experiment name
+	experiment_name: str = 'experiment_inference'
 	# Number of denoising steps
 	n_steps: int = 100
 	# Strength for SDEdit
