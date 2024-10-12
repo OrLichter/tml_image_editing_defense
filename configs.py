@@ -7,50 +7,48 @@ from PIL import Image
 
 PROMPTS_LIST = [
 	"",
-	"on fire",
-	"as a liquid",
-	"melting",
-	"as a lava",
-	"crumbling",
-	"as a lego",
-	"rusted and old",
-	"covered in gold",
-	"as a origami",
-	"made of of candy",
-	"as a hologram",
-	"as a neon sign",
-	"as a plush toy",
-	"exploded"
-
-	"on mars",
-	"on the moon",
-	"in a cartoon style",
-	"in a pixel art style",
-	"cubism painting",
-	"abstract painting",
-	"pencil drawing",
-	"oil painting",
-	"watercolor painting",
-	"ink drawing",
-	"pastel drawing",
-	"as if submerged underwater",
-	"in a dystopian world",
-	"in a utopian world",
-	"as a mosaic",
-	"in a desert",
-	"in a forest",
-	"in a city",
-	"in the style of picasso",
-	"in the style of van gogh",
-	"in the style of monet",
-	"in space",
-	"in a apocalypse",
-	"in a cyberpunk world",
-	"in a steampunk world",
-	"in a fantasy world",
+	# "on fire",
+	# "as a liquid",
+	# "melting",
+	# "as a lava",
+	# "crumbling",
+	# "as a lego",
+	# "rusted and old",
+	# "covered in gold",
+	# "as a origami",
+	# "made of of candy",
+	# "as a hologram",
+	# "as a neon sign",
+	# "as a plush toy",
+	# "exploded"
+	# "on mars",
+	# "on the moon",
+	# "in a cartoon style",
+	# "in a pixel art style",
+	# "cubism painting",
+	# "abstract painting",
+	# "pencil drawing",
+	# "oil painting",
+	# "watercolor painting",
+	# "ink drawing",
+	# "pastel drawing",
+	# "as if submerged underwater",
+	# "in a dystopian world",
+	# "in a utopian world",
+	# "as a mosaic",
+	# "in a desert",
+	# "in a forest",
+	# "in a city",
+	# "in the style of picasso",
+	# "in the style of van gogh",
+	# "in the style of monet",
+	# "in space",
+	# "in a apocalypse",
+	# "in a cyberpunk world",
+	# "in a steampunk world",
+	# "in a fantasy world",
 ]
 INFERENCE_PROMPTS = [
-
 	"in space",
 	"covered in gold",
 	"on fire",
@@ -71,7 +69,7 @@ class TrainConfig:
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
-	experiment_name: str = 'experiment'
+	experiment_name: str = 'experiment_l2'
 	# Number of steps for optimization
 	n_optimization_steps: int = 200
 	# Number of denoising steps per iteration during optimization
@@ -81,7 +79,7 @@ class TrainConfig:
 	# Whether to apply loss between latents (instead of decoding with VAE at each iteration)
 	apply_loss_on_latents: bool = False
 	# Whether to limit the timesteps considered during optimization
-	limit_timesteps: bool = False
+	limit_timesteps: bool = True
 	# Loss lambda for minimizing the strength of the perturbations applied to the source image
 	perturbation_loss_lambda: float = 0.0
 	# Seed to use for training
@@ -91,11 +89,11 @@ class TrainConfig:
 
 	""" Various parameters for optimization"""
 	# Norm type
-	norm_type: str = "linf"  # or "l2"
+	norm_type: str = "l2"  # or "l2"
 	# Epsilon
-	eps: int = 0.1   # 16 for l2
+	eps: float = 0.1   # 16 for l2
 	# Step size
-	step_size: int = 0.006  # 1 for l2
+	step_size: float = 0.006  # 1 for l2
 	# Min value for clamp
 	min_value: int = -1
 	# Max value for clamp
@@ -114,6 +112,14 @@ class TrainConfig:
 		self.output_path.mkdir(exist_ok=True, parents=True)
 		self.source_image = Image.open(self.source_image_path).convert("RGB")
 		self.target_image = Image.open(self.target_image_path).convert("RGB")
+		if self.norm_type == "l2":
+			self.eps = 16
+			self.step_size = 1
+			self.grad_reps = 10
+		else:
+			self.eps = 0.1
+			self.step_size = 0.006
+			self.grad_reps = 5
 
 
 @dataclass

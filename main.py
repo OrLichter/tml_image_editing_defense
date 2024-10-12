@@ -39,18 +39,19 @@ class Trainer:
 		source_image, target_image = self._process_images()
 
 		X_adv = source_image.clone()
-
 		target_latent = self.pipeline.vae.encode(target_image).latent_dist.sample()
+
 		iterator = tqdm(range(self.cfg.n_optimization_steps))
 
 		for iteration in iterator:
 			all_grads = []
 			losses = []
 
+			output_image = None
+			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
-				prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
-				c_grad, loss = self.compute_grad(
+				c_grad, loss, output_image = self.compute_grad(
 					cur_image=X_adv,
 					prompt=prompt,
 					source_image=source_image,
@@ -71,10 +72,12 @@ class Trainer:
 			X_adv = self.perturbation_step(X_adv, grad, source_image)
 
 			if iteration % self.cfg.image_visualization_interval == 0:
-				perturbation_image = (X_adv - source_image).clamp(0, 1)
+				images = Image.fromarray(np.concatenate([
+					T.ToPILImage()((X_adv[0] / 2 + 0.5).clamp(0, 1)),
+					T.ToPILImage()((output_image[0] / 2 + 0.5).clamp(0, 1)),
+				], axis=1))
 				logs.update({
-					"adversarial_image": wandb.Image(X_adv[0].cpu().numpy()),
-					"diff_image": wandb.Image(perturbation_image[0].cpu().numpy()),
+					"train_images": wandb.Image(images, caption=prompt),
 				})
 
 			wandb.log(logs)
@@ -91,17 +94,16 @@ class Trainer:
 					 prompt: str,
 					 source_image: torch.Tensor,
 					 target_image: torch.Tensor,
-					 target_latent: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+					 target_latent: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		torch.set_grad_enabled(True)
 		cur_image = cur_image.clone()
 		cur_image.requires_grad = True
 
 		output_latent = self.attack_forward(image=cur_image, prompt=prompt)
+		output_image = self.pipeline.vae.decode(output_latent).sample
 
 		# Compute general loss between output image and target image
-		output_image = None
 		if self.cfg.apply_loss_on_images:
-			output_image = self.pipeline.vae.decode(output_latent).sample
 			rec_loss = (output_image - target_image).norm(p=2)
 		elif self.cfg.apply_loss_on_latents:
 			rec_loss = (output_latent - target_latent).norm(p=2)
@@ -110,15 +112,13 @@ class Trainer:
 
 		# Optionally add loss to minimize the strength of the perturbations applied to the source image
 		if self.cfg.perturbation_loss_lambda > 0:
-			if output_image is None:
-				output_image = self.pipeline.vae.decode(output_latent).sample
 			pert_loss = losses.perturbation_loss(output_image, source_image)
 			loss = rec_loss + self.cfg.perturbation_loss_lambda * pert_loss
 		else:
 			loss = rec_loss
 
-		grad = torch.autograd.grad(loss, [cur_image], retain_graph=True, allow_unused=True)[0]
-		return grad, loss.item()
+		grad = torch.autograd.grad(loss, [cur_image])[0]
+		return grad, loss.item(), output_image
 
 	def attack_forward(self,
 					   prompt: Union[str, List[str]],
@@ -137,6 +137,10 @@ class Trainer:
 		self.pipeline.scheduler.set_timesteps(self.cfg.n_denoising_steps_per_iteration)
 		timesteps_tensor = self.pipeline.scheduler.timesteps.to(self.device)
 
+		# Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
+		if self.cfg.limit_timesteps:
+			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
+
 		# Get additional inputs if using SDXL
 		timestep_cond, added_cond_kwargs = None, None
 		if self.use_sdxl:
@@ -149,10 +153,6 @@ class Trainer:
 		# Add noise to the input latent
 		noise = randn_tensor(image_latents.shape, device=self.device, dtype=torch.float16)
 		latents = self.pipeline.scheduler.add_noise(image_latents, noise, timesteps_tensor[:1])
-
-		# Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
-		if self.cfg.limit_timesteps:
-			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 800], device=self.device)
 
 		extra_step_kwargs = {}
 		if 'eta' in inspect.signature(self.pipeline.scheduler.step).parameters:
@@ -196,13 +196,13 @@ class Trainer:
 			# Apply L2 constraint
 			d_x = X_adv - X.detach()
 			d_x_norm = torch.renorm(d_x, p=2, dim=0, maxnorm=self.cfg.eps)
-			X_adv.data = torch.clamp(X + d_x_norm, -1, 1)
+			X_adv.data = torch.clamp(X + d_x_norm, self.cfg.min_value, self.cfg.max_value)
 
 		elif self.cfg.norm_type == 'linf':
 			# Apply Linf norm step
 			X_adv = X_adv - grad.detach().sign() * self.cfg.step_size
 			X_adv = torch.minimum(torch.maximum(X_adv, X - self.cfg.eps), X + self.cfg.eps)
-			X_adv.data = torch.clamp(X_adv, -1, 1)
+			X_adv.data = torch.clamp(X_adv, self.cfg.min_value, self.cfg.max_value)
 
 		return X_adv
 
@@ -371,7 +371,7 @@ class Inference:
 
 
 if __name__ == '__main__':
-	use_sdxl = True
+	use_sdxl = False
 	use_lcm = False
 
 	# Source image path
