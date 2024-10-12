@@ -4,13 +4,13 @@ from PIL import Image
 from pathlib import Path
 
 class ImagePromptDataset(Dataset):
-    def __init__(self, image_dir: str, defualt_prompt: str, center_crop: bool = False):
+    def __init__(self, image_dir: str, default_prompt: str, center_crop: bool = False):
         self.images = []
-        self.default_prompt = defualt_prompt
+        self.default_prompt = default_prompt
         self.image_transforms = transforms.Compose(
             [
-                transforms.Resize(1024, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(1024),
+                transforms.Resize(512, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(512),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]
