@@ -420,21 +420,21 @@ if __name__ == '__main__':
 	target_image_path = Path("/home/dcor/orlichter/TML_project/data/images/japan.jpg")
 	output_path = Path("/home/dcor/orlichter/TML_project/data/or/")
 
-	# # Part 1: Training
-	# train_cfg = TrainConfig(
-	# 	source_image_path=source_image_path,
-	# 	target_image_path=target_image_path,
-	# 	output_path=output_path,
-	# 	n_optimization_steps=200,
-	# 	device="cpu",
-	# )
-	# trainer = Trainer(
-	# 	cfg=train_cfg,
-	# 	use_sdxl=use_sdxl,
-	# 	use_lcm=use_lcm
-	# )
-	# adversarial_image = trainer.run()
-	# adversarial_image.save(output_path / "adversarial_image.png")
+	# Part 1: Training
+	train_cfg = TrainConfig(
+		source_image_path=source_image_path,
+		target_image_path=target_image_path,
+		output_path=output_path,
+		n_optimization_steps=200,
+		device="cpu",
+	)
+	trainer = Trainer(
+		cfg=train_cfg,
+		use_sdxl=use_sdxl,
+		use_lcm=use_lcm
+	)
+	adversarial_image = trainer.run()
+	adversarial_image.save(output_path / "adversarial_image.png")
 
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 
