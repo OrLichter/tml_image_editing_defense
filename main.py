@@ -12,6 +12,7 @@ from diffusers import AutoPipelineForImage2Image, AutoencoderKL, LCMScheduler
 from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 import torchvision.transforms as T
+from transformers import AutoProcessor, Blip2ForConditionalGeneration
 
 from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
 from data.dataset import ImagePromptDataset
@@ -24,7 +25,8 @@ class Trainer:
 		self.cfg = cfg
 		self.use_sdxl = use_sdxl
 		self.use_lcm = use_lcm
-		self.pipeline = self.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float16)
+		self.dtype = torch.float32
+		self.pipeline = self.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=self.dtype)
 		self.device = torch.device("cuda")
 
 	def run(self) -> Image.Image:
@@ -37,6 +39,11 @@ class Trainer:
 		wandb.save(os.path.basename(__file__))
 
 		source_image, target_image = self._process_images()
+		
+		source_image_caption = ''
+		if self.cfg.add_image_caption_to_prompts:
+			source_image_caption = self._get_image_caption(self.cfg.source_image)
+			print(f"Running with prefix: {source_image_caption}")
 
 		X_adv = source_image.clone()
 		target_latent = self.pipeline.vae.encode(target_image).latent_dist.sample()
@@ -46,12 +53,14 @@ class Trainer:
 		for iteration in iterator:
 			all_grads = []
 			losses = []
+			loss_dict = {}
 
 			output_image = None
 			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
+			prompt = f"{source_image_caption} {prompt}" if self.cfg.add_image_caption_to_prompts else prompt
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
-				c_grad, loss, output_image = self.compute_grad(
+				c_grad, loss, output_image, loss_dict = self.compute_grad(
 					cur_image=X_adv,
 					prompt=prompt,
 					source_image=source_image,
@@ -67,6 +76,7 @@ class Trainer:
 			# Display average loss
 			iterator.set_description_str(f'AVG Loss: {np.mean(losses):.3f}')
 			logs = {"avg_loss": np.mean(losses)}
+			logs.update(loss_dict)
 
 			# Apply the perturbation step (either L2 or Linf)
 			X_adv = self.perturbation_step(X_adv, grad, source_image)
@@ -94,7 +104,7 @@ class Trainer:
 					 prompt: str,
 					 source_image: torch.Tensor,
 					 target_image: torch.Tensor,
-					 target_latent: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+					 target_latent: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
 		torch.set_grad_enabled(True)
 		cur_image = cur_image.clone()
 		cur_image.requires_grad = True
@@ -113,12 +123,15 @@ class Trainer:
 		# Optionally add loss to minimize the strength of the perturbations applied to the source image
 		if self.cfg.perturbation_loss_lambda > 0:
 			pert_loss = losses.perturbation_loss(output_image, source_image)
-			loss = rec_loss + self.cfg.perturbation_loss_lambda * pert_loss
+			loss = self.cfg.rec_loss_lambda * rec_loss + self.cfg.perturbation_loss_lambda * pert_loss
 		else:
-			loss = rec_loss
-
+			loss = self.cfg.rec_loss_lambda * rec_loss
+			pert_loss = torch.tensor(0.0)
+		
+		loss_dict = {'rec_loss': rec_loss.item(), 'pert_loss': pert_loss.item()}
+		
 		grad = torch.autograd.grad(loss, [cur_image])[0]
-		return grad, loss.item(), output_image
+		return grad, loss.item(), output_image, loss_dict
 
 	def attack_forward(self,
 					   prompt: Union[str, List[str]],
@@ -139,7 +152,7 @@ class Trainer:
 
 		# Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
 		if self.cfg.limit_timesteps:
-			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 700], device=self.device)
+			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if t < 700], device=self.device)
 
 		# Get additional inputs if using SDXL
 		timestep_cond, added_cond_kwargs = None, None
@@ -151,7 +164,7 @@ class Trainer:
 			)
 
 		# Add noise to the input latent
-		noise = randn_tensor(image_latents.shape, device=self.device, dtype=torch.float16)
+		noise = randn_tensor(image_latents.shape, device=self.device, dtype=self.dtype)
 		latents = self.pipeline.scheduler.add_noise(image_latents, noise, timesteps_tensor[:1])
 
 		extra_step_kwargs = {}
@@ -237,10 +250,19 @@ class Trainer:
 
 	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor]:
 		image_transforms = ImagePromptDataset.get_image_transforms()
-		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to('cuda', dtype=torch.float16)
-		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to('cuda', dtype=torch.float16)
+		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to('cuda', dtype=self.dtype)
+		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to('cuda', dtype=self.dtype)
 		return source_image, target_image
 
+	def _get_image_caption(self, image: Image.Image) -> str:
+		processor = AutoProcessor.from_pretrained("Salesforce/blip2-flan-t5-xl")
+		model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xl", torch_dtype=self.dtype)
+		question = "what is shown in the image?"
+		inputs = processor(image, question, return_tensors="pt").to(self.device, self.dtype)
+		generated_ids = model.generate(**inputs, max_new_tokens=20)
+		generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+		return generated_text
+	
 	def _encode_prompt(self, prompt: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 		if self.use_sdxl:
 			(
@@ -339,6 +361,7 @@ class Inference:
 		torch.manual_seed(cfg.seed)
 		output_images = []
 		for prompt in inference_prompts:
+			# 499, 259
 			output_clean = pipeline.__call__(
 				prompt=prompt,
 				image=source_image,
@@ -363,7 +386,7 @@ class Inference:
 				output_adversarial.resize((512, 512))
 			]
 			joined_image = Image.fromarray(np.concatenate(images, axis=1))
-			save_name = "-".join(prompt[:30].split())
+			save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 			joined_image.save(cfg.output_path / f"{save_name}.png")
 			wandb.log({f"val_images": wandb.Image(joined_image, caption=prompt)})
 			output_images.append(joined_image)
@@ -372,7 +395,7 @@ class Inference:
 
 if __name__ == '__main__':
 	use_sdxl = False
-	use_lcm = False
+	use_lcm = True
 
 	# Source image path
 	source_image_path = Path("data/images/japan.jpg")
@@ -384,7 +407,7 @@ if __name__ == '__main__':
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_optimization_steps=200,
+		n_optimization_steps=100,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,

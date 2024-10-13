@@ -7,48 +7,49 @@ from PIL import Image
 
 PROMPTS_LIST = [
 	"",
-	# "on fire",
-	# "as a liquid",
-	# "melting",
-	# "as a lava",
-	# "crumbling",
-	# "as a lego",
-	# "rusted and old",
-	# "covered in gold",
-	# "as a origami",
-	# "made of of candy",
-	# "as a hologram",
-	# "as a neon sign",
-	# "as a plush toy",
-	# "exploded"
-	# "on mars",
-	# "on the moon",
-	# "in a cartoon style",
-	# "in a pixel art style",
-	# "cubism painting",
-	# "abstract painting",
-	# "pencil drawing",
-	# "oil painting",
-	# "watercolor painting",
-	# "ink drawing",
-	# "pastel drawing",
-	# "as if submerged underwater",
-	# "in a dystopian world",
-	# "in a utopian world",
-	# "as a mosaic",
-	# "in a desert",
-	# "in a forest",
-	# "in a city",
-	# "in the style of picasso",
-	# "in the style of van gogh",
-	# "in the style of monet",
-	# "in space",
-	# "in a apocalypse",
-	# "in a cyberpunk world",
-	# "in a steampunk world",
-	# "in a fantasy world",
+	"on fire",
+	"as a liquid",
+	"melting",
+	"as a lava",
+	"crumbling",
+	"as a lego",
+	"rusted and old",
+	"covered in gold",
+	"as a origami",
+	"made of of candy",
+	"as a hologram",
+	"as a neon sign",
+	"as a plush toy",
+	"exploded"
+	"on mars",
+	"on the moon",
+	"in a cartoon style",
+	"in a pixel art style",
+	"cubism painting",
+	"abstract painting",
+	"pencil drawing",
+	"oil painting",
+	"watercolor painting",
+	"ink drawing",
+	"pastel drawing",
+	"as if submerged underwater",
+	"in a dystopian world",
+	"in a utopian world",
+	"as a mosaic",
+	"in a desert",
+	"in a forest",
+	"in a city",
+	"in the style of picasso",
+	"in the style of van gogh",
+	"in the style of monet",
+	"in space",
+	"in a apocalypse",
+	"in a cyberpunk world",
+	"in a steampunk world",
+	"in a fantasy world",
 ]
 INFERENCE_PROMPTS = [
+	"",
 	"in space",
 	"covered in gold",
 	"on fire",
@@ -79,8 +80,10 @@ class TrainConfig:
 	apply_loss_on_latents: bool = False
 	# Whether to limit the timesteps considered during optimization
 	limit_timesteps: bool = True
+	# Loss lambda for L2 loss between the output image and target image
+	rec_loss_lambda: float = 1.0
 	# Loss lambda for minimizing the strength of the perturbations applied to the source image
-	perturbation_loss_lambda: float = 0.0
+	perturbation_loss_lambda: float = 1.0
 	# Seed to use for training
 	seed: int = 42
 	# Default prompt to use
@@ -98,11 +101,13 @@ class TrainConfig:
 	# Max value for clamp
 	max_value: int = 1
 	# Guidance scale for training
-	guidance_scale: float = 7.5
+	guidance_scale: float = 3.0
 	# Number of repetitions per iteration
 	grad_reps: int = 5   # 10 for l2
 	# Eta value for scheduler
-	eta: float = 1.0
+	eta: float = 0.0
+	# Whether to add a prefix to each prompt describe the object in the image
+	add_image_caption_to_prompts: bool = False
 
 	""" For visualization purposes """
 	image_visualization_interval: int = 25
@@ -113,7 +118,7 @@ class TrainConfig:
 		self.target_image = Image.open(self.target_image_path).convert("RGB")
 		if self.norm_type == "l2":
 			self.eps = 32
-			self.step_size = 2
+			self.step_size = 10
 			self.grad_reps = 10
 		else:
 			self.eps = 0.1
