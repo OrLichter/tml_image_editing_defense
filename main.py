@@ -426,7 +426,7 @@ if __name__ == '__main__':
 		target_image_path=target_image_path,
 		output_path=output_path,
 		n_optimization_steps=200,
-		device="cpu",
+		# device="cpu",
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
