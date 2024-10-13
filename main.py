@@ -3,6 +3,7 @@ import inspect
 import os
 from pathlib import Path
 from typing import List, Tuple, Union
+from transformers import pipeline
 
 import numpy as np
 import torch
@@ -17,6 +18,7 @@ from transformers import AutoProcessor, Blip2ForConditionalGeneration
 from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
 from data.dataset import ImagePromptDataset
 from losses import losses
+from pipelines.pipeline_stable_diffusion_img2img import StableDiffusionImg2ImgPipeline
 
 
 class Trainer:
@@ -38,7 +40,8 @@ class Trainer:
 		)
 		wandb.save(os.path.basename(__file__))
 
-		source_image, target_image = self._process_images()
+		source_image, target_image, source_mask = self._process_images()
+		target_image = target_image.clone().detach().requires_grad_(False)
 		
 		source_image_caption = ''
 		if self.cfg.add_image_caption_to_prompts:
@@ -79,11 +82,17 @@ class Trainer:
 			logs.update(loss_dict)
 
 			# Apply the perturbation step (either L2 or Linf)
-			X_adv = self.perturbation_step(X_adv, grad, source_image)
+			X_adv = self.perturbation_step(
+				X_adv=X_adv,
+				grad=grad,
+				X=source_image,
+				X_mask=source_mask if self.cfg.use_segmentation_mask else None
+			)
 
-			if iteration % self.cfg.image_visualization_interval == 0:
+			if iteration % self.cfg.image_visualization_interval == 0 or iteration == self.cfg.n_optimization_steps - 1:
 				images = Image.fromarray(np.concatenate([
 					T.ToPILImage()((X_adv[0] / 2 + 0.5).clamp(0, 1)),
+					T.ToPILImage()(((source_image[0] - X_adv[0]) / 2 + 0.5).clamp(0, 1)),
 					T.ToPILImage()((output_image[0] / 2 + 0.5).clamp(0, 1)),
 				], axis=1))
 				logs.update({
@@ -197,13 +206,21 @@ class Trainer:
 		latents = 1 / 0.18215 * latents
 		return latents
 
-	def perturbation_step(self, X_adv: torch.Tensor, grad: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+	def perturbation_step(self,
+	                      X_adv: torch.Tensor,
+	                      grad: torch.Tensor,
+	                      X: torch.Tensor,
+	                      X_mask: torch.Tensor) -> torch.Tensor:
 		"""Apply the perturbation step for either L2 or Linf norm."""
 		if self.cfg.norm_type == 'l2':
 			# Normalize gradient for L2 norm
 			l = len(X.shape) - 1
 			grad_norm = torch.norm(grad.detach().reshape(grad.shape[0], -1), dim=1).view(-1, *([1] * l))
 			grad_normalized = grad.detach() / (grad_norm + 1e-10)
+			
+			if X_mask is not None:
+				grad_normalized = grad_normalized * X_mask.repeat(1, 3, 1, 1)
+			
 			X_adv = X_adv - grad_normalized * self.cfg.step_size
 
 			# Apply L2 constraint
@@ -236,7 +253,7 @@ class Trainer:
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdxl")
 				pipeline.fuse_lora()
 		else:
-			pipeline = AutoPipelineForImage2Image.from_pretrained(
+			pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
 				"runwayml/stable-diffusion-v1-5",
 				torch_dtype=dtype,
 			)
@@ -248,11 +265,18 @@ class Trainer:
 
 		return pipeline
 
-	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor]:
+	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		image_transforms = ImagePromptDataset.get_image_transforms()
+		image_transforms_2 = ImagePromptDataset.get_image_transform_no_normalization()
 		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to('cuda', dtype=self.dtype)
 		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to('cuda', dtype=self.dtype)
-		return source_image, target_image
+		# Segment the source image so that the perturbations are applied only to the salient regions
+		pipe = pipeline("image-segmentation", model="briaai/RMBG-1.4", trust_remote_code=True)
+		source_mask_image = pipe(str(self.cfg.source_image_path), return_mask=True)
+		source_mask = image_transforms_2(source_mask_image).unsqueeze(0).to('cuda', dtype=self.dtype)
+		source_mask[source_mask > 0.5] = 1
+		source_mask[source_mask <= 0.5] = 0
+		return source_image, target_image, source_mask
 
 	def _get_image_caption(self, image: Image.Image) -> str:
 		processor = AutoProcessor.from_pretrained("Salesforce/blip2-flan-t5-xl")
@@ -407,7 +431,7 @@ if __name__ == '__main__':
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_optimization_steps=100,
+		n_optimization_steps=200,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,

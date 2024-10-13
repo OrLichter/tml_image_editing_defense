@@ -7,56 +7,56 @@ from PIL import Image
 
 PROMPTS_LIST = [
 	"",
-	"on fire",
-	"as a liquid",
-	"melting",
-	"as a lava",
-	"crumbling",
-	"as a lego",
-	"rusted and old",
-	"covered in gold",
-	"as a origami",
-	"made of of candy",
-	"as a hologram",
-	"as a neon sign",
-	"as a plush toy",
-	"exploded"
-	"on mars",
-	"on the moon",
-	"in a cartoon style",
-	"in a pixel art style",
-	"cubism painting",
-	"abstract painting",
-	"pencil drawing",
-	"oil painting",
-	"watercolor painting",
-	"ink drawing",
-	"pastel drawing",
-	"as if submerged underwater",
-	"in a dystopian world",
-	"in a utopian world",
-	"as a mosaic",
-	"in a desert",
-	"in a forest",
-	"in a city",
-	"in the style of picasso",
-	"in the style of van gogh",
-	"in the style of monet",
 	"in space",
-	"in a apocalypse",
-	"in a cyberpunk world",
-	"in a steampunk world",
-	"in a fantasy world",
+	"on fire",
+	# "as a liquid",
+	# "melting",
+	# "as a lava",
+	# "crumbling",
+	# "as a lego",
+	# "rusted and old",
+	# "covered in gold",
+	# "as a origami",
+	# "made of of candy",
+	# "as a hologram",
+	# "as a neon sign",
+	# "as a plush toy",
+	# "exploded"
+	# "on mars",
+	# "on the moon",
+	# "in a cartoon style",
+	# "in a pixel art style",
+	# "cubism painting",
+	# "abstract painting",
+	# "pencil drawing",
+	# "oil painting",
+	# "watercolor painting",
+	# "ink drawing",
+	# "pastel drawing",
+	# "as if submerged underwater",
+	# "in a dystopian world",
+	# "in a utopian world",
+	# "as a mosaic",
+	# "in a desert",
+	# "in a forest",
+	# "in a city",
+	# "in the style of picasso",
+	# "in the style of van gogh",
+	# "in the style of monet",
+	# "in space",
+	# "in a apocalypse",
+	# "in a cyberpunk world",
+	# "in a steampunk world",
+	# "in a fantasy world",
 ]
 INFERENCE_PROMPTS = [
 	"",
 	"in space",
-	"covered in gold",
 	"on fire",
-	"frozen in ice",
-	"in space",
-	"as a black and white pencil sketch",
-	"in the style of picasso",
+	# "frozen in ice",
+	# "in space",
+	# "as a black and white pencil sketch",
+	# "in the style of picasso",
 ]
 
 
@@ -105,9 +105,11 @@ class TrainConfig:
 	# Number of repetitions per iteration
 	grad_reps: int = 5   # 10 for l2
 	# Eta value for scheduler
-	eta: float = 0.0
+	eta: float = 1.0
 	# Whether to add a prefix to each prompt describe the object in the image
 	add_image_caption_to_prompts: bool = False
+	# Whether to allow perturbations only on salient regions of the image
+	use_segmentation_mask: bool = True
 
 	""" For visualization purposes """
 	image_visualization_interval: int = 25
