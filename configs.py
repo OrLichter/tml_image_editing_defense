@@ -6,47 +6,83 @@ from PIL import Image
 
 
 PROMPTS_LIST = [
-	"",
-	# "on fire",
-	# "as a liquid",
-	# "melting",
-	# "as a lava",
-	# "crumbling",
-	# "as a lego",
-	# "rusted and old",
-	# "covered in gold",
-	# "as a origami",
-	# "made of of candy",
-	# "as a hologram",
-	# "as a neon sign",
-	# "as a plush toy",
-	# "exploded"
-	# "on mars",
-	# "on the moon",
-	# "in a cartoon style",
-	# "in a pixel art style",
-	# "cubism painting",
-	# "abstract painting",
-	# "pencil drawing",
-	# "oil painting",
-	# "watercolor painting",
-	# "ink drawing",
-	# "pastel drawing",
-	# "as if submerged underwater",
-	# "in a dystopian world",
-	# "in a utopian world",
-	# "as a mosaic",
-	# "in a desert",
-	# "in a forest",
-	# "in a city",
-	# "in the style of picasso",
-	# "in the style of van gogh",
-	# "in the style of monet",
-	# "in space",
-	# "in a apocalypse",
-	# "in a cyberpunk world",
-	# "in a steampunk world",
-	# "in a fantasy world",
+	"on fire",
+	"as a liquid",
+	"melting",
+	"as a lava",
+	"crumbling",
+	"as a lego",
+	"rusted and old",
+	"covered in gold",
+	"as a origami",
+	"made of of candy",
+	"as a hologram",
+	"as a neon sign",
+	"as a plush toy",
+	"exploded",
+	"on mars",
+	"on the moon",
+	"in a cartoon style",
+	"in a pixel art style",
+	"cubism painting",
+	"abstract painting",
+	"pencil drawing",
+	"oil painting",
+	"watercolor painting",
+	"ink drawing",
+	"pastel drawing",
+	"as if submerged underwater",
+	"in a dystopian world",
+	"in a utopian world",
+	"as a mosaic",
+	"in a desert",
+	"in a forest",
+	"in a city",
+	"in the style of picasso",
+	"in the style of van gogh",
+	"in the style of monet",
+	"in space",
+	"in a apocalypse",
+	"in a cyberpunk world",
+	"in a steampunk world",
+	"in a fantasy world",
+	"as a crystal",
+	"made of ice",
+	"as a balloon",
+	"made of glass",
+	"as a snow globe",
+	"as a robot",
+	"in low poly style",
+	"as a wireframe",
+	"as a steampunk machine",
+	"wrapped in vines",
+	"as a wooden sculpture",
+	"as a papercraft",
+	"as if made of shadows",
+	"glowing in the dark",
+	"as a glitch effect",
+	"as a 3D printed object",
+	"as a pixelated glitch",
+	"surrounded by lightning",
+	"as a graffiti mural",
+	"as a comic book panel",
+	"as a stained glass window",
+	"as a shadow puppet",
+	"as a chalk drawing",
+	"as a street art stencil",
+	"as if made of stars",
+	"as a holographic projection",
+	"in a futuristic city",
+	"in an underwater cave",
+	"in a sci-fi world",
+	"in a medieval setting",
+	"as if made of electricity",
+	"as a giant sculpture",
+	"shattered into pieces",
+	"transformed into light",
+	"as a floating cloud",
+	"as a time-traveling object",
+
 ]
 INFERENCE_PROMPTS = [
 	"in space",
@@ -65,10 +101,12 @@ class TrainConfig:
 	source_image_path: Path = Path("data/images/japan.jpg")
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
+	# Target image prompt
+	default_target_image_prompt: str = "fuji pagoda"
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
-	experiment_name: str = 'experiment_l2'
+	experiment_name: str = 'test_or'
 	# Number of steps for optimization
 	n_optimization_steps: int = 200
 	# Number of denoising steps per iteration during optimization
@@ -85,6 +123,8 @@ class TrainConfig:
 	seed: int = 42
 	# Default prompt to use
 	prompts: List[str] = field(default_factory=lambda: PROMPTS_LIST)
+	# Device to use for training
+	device: str = "cuda:0"
 
 	""" Various parameters for optimization"""
 	# Norm type
@@ -127,6 +167,8 @@ class InferenceConfig:
 	source_image_path: Path = Path("data/images/japan.jpg")
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
+ 	# Target image prompt
+	default_target_image_prompt: str = "fuji pagoda"
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name

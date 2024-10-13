@@ -19,13 +19,18 @@ from losses import losses
 
 
 class Trainer:
-
 	def __init__(self, cfg: TrainConfig, use_sdxl: bool = True, use_lcm: bool = False):
 		self.cfg = cfg
 		self.use_sdxl = use_sdxl
 		self.use_lcm = use_lcm
-		self.pipeline = self.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float16)
-		self.device = torch.device("cuda")
+		self.device = cfg.device
+		self.dtype = torch.float32 if cfg.device == "cpu" else torch.float16
+		self.pipeline = self.load_models(
+      		use_sdxl=use_sdxl,
+        	use_lcm=use_lcm,
+         	device=self.device,
+          	dtype=self.dtype
+		)
 
 	def run(self) -> Image.Image:
 		""" Main training loop """
@@ -48,7 +53,8 @@ class Trainer:
 			losses = []
 
 			output_image = None
-			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
+			prompt_addition = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
+			prompt = f"{self.cfg.default_target_image_prompt} {prompt_addition}"
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
 				c_grad, loss, output_image = self.compute_grad(
@@ -139,7 +145,7 @@ class Trainer:
 
 		# Limit the timesteps since we know that for editing, we only really want a subset of the timesteps
 		if self.cfg.limit_timesteps:
-			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 700], device=self.device)
+			timesteps_tensor = torch.tensor([t for t in timesteps_tensor if 100 < t < 700], device=self.device)  # TODO: Move to config
 
 		# Get additional inputs if using SDXL
 		timestep_cond, added_cond_kwargs = None, None
@@ -151,7 +157,7 @@ class Trainer:
 			)
 
 		# Add noise to the input latent
-		noise = randn_tensor(image_latents.shape, device=self.device, dtype=torch.float16)
+		noise = randn_tensor(image_latents.shape, device=self.device, dtype=self.dtype)
 		latents = self.pipeline.scheduler.add_noise(image_latents, noise, timesteps_tensor[:1])
 
 		extra_step_kwargs = {}
@@ -209,14 +215,15 @@ class Trainer:
 	@staticmethod
 	def load_models(use_sdxl: bool = True,
 					use_lcm: bool = False,
+					device: str = "cuda",
 					dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
 		if use_sdxl:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
 				"stabilityai/stable-diffusion-xl-base-1.0",
 				torch_dtype=dtype,
 			)
-			pipeline = pipeline.to("cuda")
-			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to('cuda')
+			pipeline = pipeline.to(device)
+			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
 			pipeline.vae = vae
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
@@ -227,7 +234,7 @@ class Trainer:
 				"runwayml/stable-diffusion-v1-5",
 				torch_dtype=dtype,
 			)
-			pipeline = pipeline.to("cuda")
+			pipeline = pipeline.to(device)
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
@@ -237,8 +244,8 @@ class Trainer:
 
 	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor]:
 		image_transforms = ImagePromptDataset.get_image_transforms()
-		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to('cuda', dtype=torch.float16)
-		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to('cuda', dtype=torch.float16)
+		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to(self.device, dtype=self.dtype)
+		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to(self.device, dtype=self.dtype)
 		return source_image, target_image
 
 	def _encode_prompt(self, prompt: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -293,7 +300,7 @@ class Trainer:
 		)
 		add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
 		add_time_ids = torch.cat([add_neg_time_ids, add_time_ids], dim=0)
-		added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids.to('cuda')}
+		added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids.to(self.device)}
 		return added_cond_kwargs
 
 	@staticmethod
@@ -371,13 +378,13 @@ class Inference:
 
 
 if __name__ == '__main__':
-	use_sdxl = False
+	use_sdxl = True
 	use_lcm = False
 
 	# Source image path
-	source_image_path = Path("data/images/japan.jpg")
-	target_image_path = Path("data/images/japan.jpg")
-	output_path = Path("/data/yuval/")
+	source_image_path = Path("/home/dcor/orlichter/TML_project/data/images/japan.jpg")
+	target_image_path = Path("/home/dcor/orlichter/TML_project/data/images/japan.jpg")
+	output_path = Path("/home/dcor/orlichter/TML_project/data/or/")
 
 	# # Part 1: Training
 	train_cfg = TrainConfig(
@@ -385,6 +392,7 @@ if __name__ == '__main__':
 		target_image_path=target_image_path,
 		output_path=output_path,
 		n_optimization_steps=200,
+		# device="cpu",
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
