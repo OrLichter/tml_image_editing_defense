@@ -103,7 +103,7 @@ class TrainConfig:
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
 	# Target image prompt
-	default_target_image_prompt: str = "fuji pagoda"
+	default_source_image_caption: str = "fuji pagoda"
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
@@ -173,7 +173,7 @@ class InferenceConfig:
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
  	# Target image prompt
-	default_target_image_prompt: str = "fuji pagoda"
+	default_source_image_caption: str = "fuji pagoda"
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
@@ -186,6 +186,8 @@ class InferenceConfig:
 	guidance_scale: float = 7.5
 	# Seed to use for inference
 	seed: int = 42
+	add_image_caption_to_prompts: bool = False
+ 
 
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)

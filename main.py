@@ -45,8 +45,11 @@ class Trainer:
 		source_image, target_image = self._process_images()
 		
 		source_image_caption = ''
-		if self.cfg.add_image_caption_to_prompts:
-			source_image_caption = self._get_image_caption(self.cfg.source_image)
+		if self.cfg.default_source_image_caption != "" or self.cfg.add_image_caption_to_prompts:
+			if self.cfg.default_source_image_caption != "":
+				source_image_caption = self.cfg.default_source_image_caption
+			else:
+				source_image_caption = self._get_image_caption(self.cfg.source_image, device=self.device, dtype=self.dtype)
 			print(f"Running with prefix: {source_image_caption}")
 
 		X_adv = source_image.clone()
@@ -61,7 +64,7 @@ class Trainer:
 
 			output_image = None
 			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
-			prompt = f"{source_image_caption} {prompt}" if self.cfg.add_image_caption_to_prompts else prompt
+			prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
 				c_grad, loss, output_image, loss_dict = self.compute_grad(
@@ -259,11 +262,12 @@ class Trainer:
 		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to(self.device, dtype=self.dtype)
 		return source_image, target_image
 
-	def _get_image_caption(self, image: Image.Image) -> str:
+	@staticmethod
+	def _get_image_caption(image: Image.Image, device = 'cuda:0', dtype = torch.float16) -> str:
 		processor = AutoProcessor.from_pretrained("Salesforce/blip2-flan-t5-xl")
-		model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xl", torch_dtype=self.dtype)
+		model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xl", torch_dtype=dtype)
 		question = "what is shown in the image?"
-		inputs = processor(image, question, return_tensors="pt").to(self.device, self.dtype)
+		inputs = processor(image, question, return_tensors="pt").to(device, dtype)
 		generated_ids = model.generate(**inputs, max_new_tokens=20)
 		generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 		return generated_text
@@ -364,6 +368,15 @@ class Inference:
 		source_image = Image.open(cfg.source_image_path).convert("RGB")
 		target_image = Image.open(cfg.target_image_path).convert("RGB")
 		torch.manual_seed(cfg.seed)
+
+		source_image_caption = ''
+		if cfg.default_source_image_caption != "" or cfg.add_image_caption_to_prompts:
+			if cfg.default_source_image_caption != "":
+				source_image_caption = cfg.default_source_image_caption
+			else:
+				source_image_caption = Trainer._get_image_caption(cfg.source_image, dtype=torch.float32)
+			print(f"Running with prefix: {source_image_caption}")
+   
 		output_images = []
 		for prompt in inference_prompts:
 			
@@ -408,20 +421,20 @@ if __name__ == '__main__':
 	output_path = Path("/home/dcor/orlichter/TML_project/data/or/")
 
 	# # Part 1: Training
-	train_cfg = TrainConfig(
-		source_image_path=source_image_path,
-		target_image_path=target_image_path,
-		output_path=output_path,
-		n_optimization_steps=200,
-		# device="cpu",
-	)
-	trainer = Trainer(
-		cfg=train_cfg,
-		use_sdxl=use_sdxl,
-		use_lcm=use_lcm
-	)
-	adversarial_image = trainer.run()
-	adversarial_image.save(output_path / "adversarial_image.png")
+	# train_cfg = TrainConfig(
+	# 	source_image_path=source_image_path,
+	# 	target_image_path=target_image_path,
+	# 	output_path=output_path,
+	# 	n_optimization_steps=200,
+	# 	device="cpu",
+	# )
+	# trainer = Trainer(
+	# 	cfg=train_cfg,
+	# 	use_sdxl=use_sdxl,
+	# 	use_lcm=use_lcm
+	# )
+	# adversarial_image = trainer.run()
+	# adversarial_image.save(output_path / "adversarial_image.png")
 
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 
