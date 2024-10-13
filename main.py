@@ -27,9 +27,14 @@ class Trainer:
 		self.cfg = cfg
 		self.use_sdxl = use_sdxl
 		self.use_lcm = use_lcm
-		self.dtype = torch.float32
-		self.pipeline = self.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=self.dtype)
-		self.device = torch.device("cuda")
+		self.device = cfg.device
+		self.dtype = torch.float32 if cfg.device == "cpu" else torch.float16
+		self.pipeline = self.load_models(
+      		use_sdxl=use_sdxl,
+        	use_lcm=use_lcm,
+         	device=self.device,
+          	dtype=self.dtype
+		)
 
 	def run(self) -> Image.Image:
 		""" Main training loop """
@@ -44,8 +49,11 @@ class Trainer:
 		target_image = target_image.clone().detach().requires_grad_(False)
 		
 		source_image_caption = ''
-		if self.cfg.add_image_caption_to_prompts:
-			source_image_caption = self._get_image_caption(self.cfg.source_image)
+		if self.cfg.default_source_image_caption != "" or self.cfg.add_image_caption_to_prompts:
+			if self.cfg.default_source_image_caption != "":
+				source_image_caption = self.cfg.default_source_image_caption
+			else:
+				source_image_caption = self._get_image_caption(self.cfg.source_image, device=self.device, dtype=self.dtype)
 			print(f"Running with prefix: {source_image_caption}")
 
 		X_adv = source_image.clone()
@@ -60,7 +68,7 @@ class Trainer:
 
 			output_image = None
 			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
-			prompt = f"{source_image_caption} {prompt}" if self.cfg.add_image_caption_to_prompts else prompt
+			prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
 				c_grad, loss, output_image, loss_dict = self.compute_grad(
@@ -239,14 +247,15 @@ class Trainer:
 	@staticmethod
 	def load_models(use_sdxl: bool = True,
 					use_lcm: bool = False,
+					device: str = "cuda",
 					dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
 		if use_sdxl:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
 				"stabilityai/stable-diffusion-xl-base-1.0",
 				torch_dtype=dtype,
 			)
-			pipeline = pipeline.to("cuda")
-			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to('cuda')
+			pipeline = pipeline.to(device)
+			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
 			pipeline.vae = vae
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
@@ -257,7 +266,7 @@ class Trainer:
 				"runwayml/stable-diffusion-v1-5",
 				torch_dtype=dtype,
 			)
-			pipeline = pipeline.to("cuda")
+			pipeline = pipeline.to(device)
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
@@ -268,8 +277,8 @@ class Trainer:
 	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		image_transforms = ImagePromptDataset.get_image_transforms()
 		image_transforms_2 = ImagePromptDataset.get_image_transform_no_normalization()
-		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to('cuda', dtype=self.dtype)
-		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to('cuda', dtype=self.dtype)
+		source_image = image_transforms(self.cfg.source_image).unsqueeze(0).to(self.device, dtype=self.dtype)
+		target_image = image_transforms(self.cfg.target_image).unsqueeze(0).to(self.device, dtype=self.dtype)
 		# Segment the source image so that the perturbations are applied only to the salient regions
 		pipe = pipeline("image-segmentation", model="briaai/RMBG-1.4", trust_remote_code=True)
 		source_mask_image = pipe(str(self.cfg.source_image_path), return_mask=True)
@@ -278,11 +287,12 @@ class Trainer:
 		source_mask[source_mask <= 0.5] = 0
 		return source_image, target_image, source_mask
 
-	def _get_image_caption(self, image: Image.Image) -> str:
+	@staticmethod
+	def _get_image_caption(image: Image.Image, device = 'cuda:0', dtype = torch.float16) -> str:
 		processor = AutoProcessor.from_pretrained("Salesforce/blip2-flan-t5-xl")
-		model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xl", torch_dtype=self.dtype)
+		model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xl", torch_dtype=dtype)
 		question = "what is shown in the image?"
-		inputs = processor(image, question, return_tensors="pt").to(self.device, self.dtype)
+		inputs = processor(image, question, return_tensors="pt").to(device, dtype)
 		generated_ids = model.generate(**inputs, max_new_tokens=20)
 		generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 		return generated_text
@@ -339,7 +349,7 @@ class Trainer:
 		)
 		add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
 		add_time_ids = torch.cat([add_neg_time_ids, add_time_ids], dim=0)
-		added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids.to('cuda')}
+		added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids.to(self.device)}
 		return added_cond_kwargs
 
 	@staticmethod
@@ -383,9 +393,18 @@ class Inference:
 		source_image = Image.open(cfg.source_image_path).convert("RGB")
 		target_image = Image.open(cfg.target_image_path).convert("RGB")
 		torch.manual_seed(cfg.seed)
+
+		source_image_caption = ''
+		if cfg.default_source_image_caption != "" or cfg.add_image_caption_to_prompts:
+			if cfg.default_source_image_caption != "":
+				source_image_caption = cfg.default_source_image_caption
+			else:
+				source_image_caption = Trainer._get_image_caption(cfg.source_image, dtype=torch.float32)
+			print(f"Running with prefix: {source_image_caption}")
+   
 		output_images = []
 		for prompt in inference_prompts:
-			# 499, 259
+			
 			output_clean = pipeline.__call__(
 				prompt=prompt,
 				image=source_image,
@@ -431,7 +450,8 @@ if __name__ == '__main__':
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_optimization_steps=200,
+		n_optimization_steps=100,
+		# device="cpu",
 	)
 	trainer = Trainer(
 		cfg=train_cfg,

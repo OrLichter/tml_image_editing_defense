@@ -4,7 +4,6 @@ from typing import List
 
 from PIL import Image
 
-
 PROMPTS_LIST = [
 	"",
 	"in space",
@@ -21,7 +20,7 @@ PROMPTS_LIST = [
 	# "as a hologram",
 	# "as a neon sign",
 	# "as a plush toy",
-	# "exploded"
+	# "exploded",
 	# "on mars",
 	# "on the moon",
 	# "in a cartoon style",
@@ -43,16 +42,53 @@ PROMPTS_LIST = [
 	# "in the style of picasso",
 	# "in the style of van gogh",
 	# "in the style of monet",
-	# "in space",
+	# "in a apocalypse",
 	# "in a apocalypse",
 	# "in a cyberpunk world",
 	# "in a steampunk world",
 	# "in a fantasy world",
+	# "as a crystal",
+	# "made of ice",
+	# "as a balloon",
+	# "made of glass",
+	# "as a snow globe",
+	# "as a robot",
+	# "in low poly style",
+	# "as a wireframe",
+	# "as a steampunk machine",
+	# "wrapped in vines",
+	# "as a wooden sculpture",
+	# "as a papercraft",
+	# "as if made of shadows",
+	# "glowing in the dark",
+	# "as a glitch effect",
+	# "as a 3D printed object",
+	# "as a pixelated glitch",
+	# "surrounded by lightning",
+	# "as a graffiti mural",
+	# "as a comic book panel",
+	# "as a stained glass window",
+	# "as a shadow puppet",
+	# "as a chalk drawing",
+	# "as a street art stencil",
+	# "as if made of stars",
+	# "as a holographic projection",
+	# "in a futuristic city",
+	# "in an underwater cave",
+	# "in a sci-fi world",
+	# "in a medieval setting",
+	# "as if made of electricity",
+	# "as a giant sculpture",
+	# "shattered into pieces",
+	# "transformed into light",
+	# "as a floating cloud",
+	# "as a time-traveling object",
 ]
 INFERENCE_PROMPTS = [
 	"",
 	"in space",
 	"on fire",
+	# "covered in gold",
 	# "frozen in ice",
 	# "in space",
 	# "as a black and white pencil sketch",
@@ -66,6 +102,8 @@ class TrainConfig:
 	source_image_path: Path = Path("data/images/japan.jpg")
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
+	# Target image prompt
+	default_source_image_caption: str = "fuji pagoda"
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
@@ -88,12 +126,14 @@ class TrainConfig:
 	seed: int = 42
 	# Default prompt to use
 	prompts: List[str] = field(default_factory=lambda: PROMPTS_LIST)
-
+	# Device to use for training
+	device: str = "cuda:0"
+	
 	""" Various parameters for optimization"""
 	# Norm type
 	norm_type: str = "l2"  # or "l2"
 	# Epsilon
-	eps: float = 0.1   # 16 for l2
+	eps: float = 0.1  # 16 for l2
 	# Step size
 	step_size: float = 0.006  # 1 for l2
 	# Min value for clamp
@@ -103,17 +143,17 @@ class TrainConfig:
 	# Guidance scale for training
 	guidance_scale: float = 3.0
 	# Number of repetitions per iteration
-	grad_reps: int = 5   # 10 for l2
+	grad_reps: int = 5  # 10 for l2
 	# Eta value for scheduler
 	eta: float = 1.0
 	# Whether to add a prefix to each prompt describe the object in the image
 	add_image_caption_to_prompts: bool = False
 	# Whether to allow perturbations only on salient regions of the image
 	use_segmentation_mask: bool = True
-
+	
 	""" For visualization purposes """
 	image_visualization_interval: int = 25
-
+	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
 		self.source_image = Image.open(self.source_image_path).convert("RGB")
@@ -134,6 +174,8 @@ class InferenceConfig:
 	source_image_path: Path = Path("data/images/japan.jpg")
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
+	# Target image prompt
+	default_source_image_caption: str = "fuji pagoda"
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
@@ -146,7 +188,8 @@ class InferenceConfig:
 	guidance_scale: float = 7.5
 	# Seed to use for inference
 	seed: int = 42
-
+	add_image_caption_to_prompts: bool = False
+	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
 		self.source_image = Image.open(self.source_image_path).convert("RGB")
