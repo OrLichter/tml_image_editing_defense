@@ -2,7 +2,7 @@ import dataclasses
 import inspect
 import os
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 from transformers import pipeline
 
 import numpy as np
@@ -35,6 +35,9 @@ class Trainer:
          	device=self.device,
           	dtype=self.dtype
 		)
+		if self.cfg.use_fixed_noise:
+			noise_shape = (1, 4, 64, 64)
+			self.noise = randn_tensor(noise_shape, device=self.device, dtype=self.dtype)
 
 	def run(self) -> Image.Image:
 		""" Main training loop """
@@ -77,6 +80,7 @@ class Trainer:
 					source_image=source_image,
 					target_image=target_image,
 					target_latent=target_latent,
+					noise=self.noise if self.cfg.use_fixed_noise else None,
 				)
 				all_grads.append(c_grad)
 				losses.append(loss)
@@ -121,12 +125,13 @@ class Trainer:
 					 prompt: str,
 					 source_image: torch.Tensor,
 					 target_image: torch.Tensor,
-					 target_latent: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+					 target_latent: torch.Tensor,
+	                 noise: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
 		torch.set_grad_enabled(True)
 		cur_image = cur_image.clone()
 		cur_image.requires_grad = True
 
-		output_latent = self.attack_forward(image=cur_image, prompt=prompt)
+		output_latent = self.attack_forward(image=cur_image, prompt=prompt, noise=noise)
 		output_image = self.pipeline.vae.decode(output_latent).sample
 
 		# Compute general loss between output image and target image
@@ -152,7 +157,8 @@ class Trainer:
 
 	def attack_forward(self,
 					   prompt: Union[str, List[str]],
-					   image: Union[torch.Tensor, Image.Image]) -> torch.Tensor:
+					   image: Union[torch.Tensor, Image.Image],
+	                   noise: Optional[torch.Tensor] = None) -> torch.Tensor:
 
 		# Encode the prompt
 		embeds = self._encode_prompt(prompt)
@@ -181,7 +187,8 @@ class Trainer:
 			)
 
 		# Add noise to the input latent
-		noise = randn_tensor(image_latents.shape, device=self.device, dtype=self.dtype)
+		if noise is None:
+			noise = randn_tensor(image_latents.shape, device=self.device, dtype=self.dtype)
 		latents = self.pipeline.scheduler.add_noise(image_latents, noise, timesteps_tensor[:1])
 
 		extra_step_kwargs = {}

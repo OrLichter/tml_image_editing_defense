@@ -107,7 +107,7 @@ class TrainConfig:
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
-	experiment_name: str = 'experiment_l2'
+	experiment_name: str = 'experiment_l2_fixed_noise'
 	# Number of steps for optimization
 	n_optimization_steps: int = 200
 	# Number of denoising steps per iteration during optimization
@@ -149,7 +149,9 @@ class TrainConfig:
 	# Whether to add a prefix to each prompt describe the object in the image
 	add_image_caption_to_prompts: bool = False
 	# Whether to allow perturbations only on salient regions of the image
-	use_segmentation_mask: bool = True
+	use_segmentation_mask: bool = False
+	# Whether to use a fixed noise for training / inference
+	use_fixed_noise: bool = True
 	
 	""" For visualization purposes """
 	image_visualization_interval: int = 25
