@@ -708,7 +708,7 @@ class StableDiffusionImg2ImgPipeline(
 
         return timesteps, num_inference_steps - t_start
 
-    def prepare_latents(self, image, timestep, batch_size, num_images_per_prompt, dtype, device, generator=None):
+    def prepare_latents(self, image, timestep, batch_size, num_images_per_prompt, dtype, device, generator=None, noise=None):
         if not isinstance(image, (torch.Tensor, PIL.Image.Image, list)):
             raise ValueError(
                 f"`image` has to be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}"
@@ -758,7 +758,8 @@ class StableDiffusionImg2ImgPipeline(
             init_latents = torch.cat([init_latents], dim=0)
 
         shape = init_latents.shape
-        noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+        if noise is None:
+            noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
 
         # get latents
         init_latents = self.scheduler.add_noise(init_latents, noise, timestep)
@@ -846,6 +847,7 @@ class StableDiffusionImg2ImgPipeline(
         clip_skip: int = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+		noise: Optional[torch.FloatTensor] = None,
         **kwargs,
     ):
         r"""
@@ -1020,6 +1022,7 @@ class StableDiffusionImg2ImgPipeline(
             prompt_embeds.dtype,
             device,
             generator,
+	        noise=noise,
         )
 
         # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline

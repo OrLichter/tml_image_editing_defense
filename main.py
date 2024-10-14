@@ -35,6 +35,7 @@ class Trainer:
          	device=self.device,
           	dtype=self.dtype
 		)
+		self.noise = None
 		if self.cfg.use_fixed_noise:
 			noise_shape = (1, 4, 64, 64)
 			self.noise = randn_tensor(noise_shape, device=self.device, dtype=self.dtype)
@@ -80,7 +81,7 @@ class Trainer:
 					source_image=source_image,
 					target_image=target_image,
 					target_latent=target_latent,
-					noise=self.noise if self.cfg.use_fixed_noise else None,
+					noise=self.noise,
 				)
 				all_grads.append(c_grad)
 				losses.append(loss)
@@ -388,7 +389,8 @@ class Inference:
 					  adversarial_image: Image.Image,
 					  inference_prompts: List[str],
 					  use_sdxl: bool = True,
-					  use_lcm: bool = False) -> List[Image.Image]:
+					  use_lcm: bool = False,
+	                  noise: Optional[torch.Tensor] = None) -> List[Image.Image]:
 		""" Main inference loop """
 		wandb.init(
 			project="TML Project",
@@ -424,7 +426,8 @@ class Inference:
 				image=adversarial_image,
 				num_inference_steps=cfg.n_steps,
 				guidance_scale=cfg.guidance_scale,
-				strength=cfg.strength
+				strength=cfg.strength,
+				noise=noise
 			).images[0]
 
 			# Join all the images together side by side
@@ -484,5 +487,6 @@ if __name__ == '__main__':
 		adversarial_image=adversarial_image,
 		inference_prompts=INFERENCE_PROMPTS,
 		use_sdxl=use_sdxl,
-		use_lcm=use_lcm
+		use_lcm=use_lcm,
+		noise=trainer.noise
 	)
