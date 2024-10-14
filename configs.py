@@ -175,7 +175,7 @@ class InferenceConfig:
 	# Source image path
 	source_image_path: Path = Path("data/images/japan.jpg")
 	# Target image path
-	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
+	target_image_path: Path = Path("data/images/japan.jpg")
 	# Target image prompt
 	default_source_image_caption: str = "fuji pagoda"
 	# Output path

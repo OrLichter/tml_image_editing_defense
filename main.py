@@ -413,7 +413,7 @@ class Inference:
    
 		output_images = []
 		for prompt in inference_prompts:
-			
+			prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
 			output_clean = pipeline.__call__(
 				prompt=prompt,
 				image=source_image,
@@ -470,8 +470,10 @@ if __name__ == '__main__':
 	)
 	adversarial_image = trainer.run()
 	adversarial_image.save(output_path / "adversarial_image.png")
+	torch.save(trainer.noise, output_path / "noise.pt")
 
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
+	trainer.noise = torch.load(output_path / "noise.pt")
 
 	# Part 2: Inference
 	inference_cfg = InferenceConfig(
