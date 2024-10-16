@@ -459,7 +459,7 @@ if __name__ == '__main__':
 	# Source image path
 	source_image_path = Path("data/images/japan.jpg")
 	target_image_path = Path("data/images/japan.jpg")
-	output_path = Path("/data/elad/")
+	output_path = Path("/data/yuval/")
 
 	# # Part 1: Training
 	train_cfg = TrainConfig(
