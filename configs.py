@@ -6,7 +6,7 @@ from PIL import Image
 
 PROMPTS_LIST = [
 	"",
-	"in space",
+	# "in space",
 	"on fire",
 	# "as a liquid",
 	# "melting",
@@ -86,7 +86,7 @@ PROMPTS_LIST = [
 ]
 INFERENCE_PROMPTS = [
 	"",
-	"in space",
+	# "in space",
 	"on fire",
 	# "covered in gold",
 	# "frozen in ice",
@@ -103,7 +103,7 @@ class TrainConfig:
 	# Target image path
 	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
 	# Target image prompt
-	default_source_image_caption: str = "fuji pagoda"
+	default_source_image_caption: str = ""
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
@@ -177,7 +177,7 @@ class InferenceConfig:
 	# Target image path
 	target_image_path: Path = Path("data/images/japan.jpg")
 	# Target image prompt
-	default_source_image_caption: str = "fuji pagoda"
+	default_source_image_caption: str = ""
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name

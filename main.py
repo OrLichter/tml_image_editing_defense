@@ -19,6 +19,7 @@ from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
 from data.dataset import ImagePromptDataset
 from losses import losses
 from pipelines.pipeline_stable_diffusion_img2img import StableDiffusionImg2ImgPipeline
+from utils.vis_utils import create_table_plot
 
 
 class Trainer:
@@ -42,6 +43,11 @@ class Trainer:
 
 	def run(self) -> Image.Image:
 		""" Main training loop """
+		# Verify that the W&B API key is defined as env variable
+		# if "WANDB_API_KEY" in os.environ:
+		# 	print('Using W&B API key from env')
+		# else:
+		# 	raise Exception("Please provide a valid W&B API key in env")
 		wandb.init(
 			project="TML Project",
 			config=dataclasses.asdict(self.cfg),
@@ -103,11 +109,10 @@ class Trainer:
 			)
 
 			if iteration % self.cfg.image_visualization_interval == 0 or iteration == self.cfg.n_optimization_steps - 1:
-				images = Image.fromarray(np.concatenate([
-					T.ToPILImage()((X_adv[0] / 2 + 0.5).clamp(0, 1)),
-					T.ToPILImage()(((source_image[0] - X_adv[0]) / 2 + 0.5).clamp(0, 1)),
-					T.ToPILImage()((output_image[0] / 2 + 0.5).clamp(0, 1)),
-				], axis=1))
+				vis_adversarial_image = T.ToPILImage()((X_adv[0] / 2 + 0.5).clamp(0, 1)) #, text='Current Adversarial Image')
+				vis_diff = T.ToPILImage()(((source_image[0] - X_adv[0]) / 2 + 0.5).clamp(0, 1)) #, text='Difference Image')
+				vis_output = T.ToPILImage()((output_image[0] / 2 + 0.5).clamp(0, 1)) #, text=f'Edited Image ({prompt})')
+				images = create_table_plot(images=[vis_adversarial_image, vis_diff, vis_output], captions=[f'Current Adversarial Image', 'Difference Image', f'Edited Image ({prompt})'])
 				logs.update({
 					"train_images": wandb.Image(images, caption=prompt),
 				})
@@ -438,7 +443,8 @@ class Inference:
 				output_clean.resize((512, 512)),
 				output_adversarial.resize((512, 512))
 			]
-			joined_image = Image.fromarray(np.concatenate(images, axis=1))
+			labels = ['Source Image', 'Target Image', 'Adversarial Image', f'Edit on Original ({prompt})', f'Edit on Adversarial ({prompt})']
+			joined_image = create_table_plot(images=images, captions=labels)
 			save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 			joined_image.save(cfg.output_path / f"{save_name}.png")
 			wandb.log({f"val_images": wandb.Image(joined_image, caption=prompt)})
@@ -453,7 +459,7 @@ if __name__ == '__main__':
 	# Source image path
 	source_image_path = Path("data/images/japan.jpg")
 	target_image_path = Path("data/images/japan.jpg")
-	output_path = Path("/data/yuval/")
+	output_path = Path("/data/elad/")
 
 	# # Part 1: Training
 	train_cfg = TrainConfig(
