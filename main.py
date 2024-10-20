@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import wandb
 from PIL import Image
-from diffusers import AutoPipelineForImage2Image, AutoencoderKL, LCMScheduler, AutoPipelineForText2Image
+from diffusers import AutoPipelineForImage2Image, AutoencoderKL, LCMScheduler
 from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 import torchvision.transforms as T
@@ -510,9 +510,9 @@ if __name__ == '__main__':
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm
 	)
-	# adversarial_image = trainer.run()
-	# adversarial_image.save(output_path / "adversarial_image.png")
-	# torch.save(trainer.noises, output_path / "noise.pt")
+	adversarial_image = trainer.run()
+	adversarial_image.save(output_path / "adversarial_image.png")
+	torch.save(trainer.noises, output_path / "noise.pt")
 	
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 	trainer.noises = torch.load(output_path / "noise.pt")
