@@ -46,7 +46,7 @@ for image_path in image_paths:
 				target_image_path=image_path,
 				default_source_image_caption="",
 				output_path=image_output_path,
-				n_optimization_steps=250,
+				n_optimization_steps=150,
 				n_noise=n_noises,
 				use_fixed_noise=True if n_noises is not None else False,
 				prompts=sampled_prompts,

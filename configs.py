@@ -86,15 +86,15 @@ NEGATIVE_PROMPT = '(worst quality, low quality, blurry:1.3), (bad teeth, deforme
 @dataclass
 class TrainConfig:
 	# Source image path
-	source_image_path: Path = Path("data/images/japan.jpg")
+	source_image_paths: List[Path] = field(default_factory=lambda: [Path("data/images/japan.jpg")])
 	# Target image path
-	target_image_path: Path = Path("data/images/stick-figure-sticker.jpg")
+	target_image_paths: List[Path] = field(default_factory=lambda: [Path("data/images/japan.jpg")])
 	# Target image prompt
 	default_source_image_caption: str = ""
 	# Output path
 	output_path: Path = Path("./output")
 	# Experiment name
-	experiment_name: str = 'experiment_l2_fixed_noise'
+	experiment_name: str = 'experiment_name'
 	# Number of steps for optimization
 	n_optimization_steps: int = 200
 	# Number of denoising steps per iteration during optimization
@@ -147,8 +147,8 @@ class TrainConfig:
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
-		self.source_image = Image.open(self.source_image_path).convert("RGB")
-		self.target_image = Image.open(self.target_image_path).convert("RGB")
+		self.source_images = [Image.open(path).convert("RGB") for path in self.source_image_paths]
+		self.target_images = [Image.open(path).convert("RGB") for path in self.target_image_paths]
 		if self.norm_type == "l2":
 			self.eps = 32
 			self.step_size = 7.5
@@ -162,9 +162,9 @@ class TrainConfig:
 @dataclass
 class InferenceConfig:
 	# Source image path
-	source_image_path: Path = Path("data/images/japan.jpg")
+	source_image_paths: List[Path] = field(default_factory=lambda: [Path("data/images/japan.jpg")])
 	# Target image path
-	target_image_path: Path = Path("data/images/japan.jpg")
+	target_image_paths: List[Path] = field(default_factory=lambda: [Path("data/images/japan.jpg")])
 	# Target image prompt
 	default_source_image_caption: str = ""
 	# Output path
@@ -190,4 +190,4 @@ class InferenceConfig:
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
-		self.source_image = Image.open(self.source_image_path).convert("RGB")
+		self.source_images = [Image.open(path).convert("RGB") for path in self.source_image_paths]
