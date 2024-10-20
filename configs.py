@@ -1,6 +1,6 @@
 from dataclasses import field, dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from PIL import Image
 
@@ -59,25 +59,25 @@ PROMPTS_LIST = [
 	"in an enchanted forest",
 ]
 INFERENCE_PROMPTS = [
-	"on fire",
-	"colorful",
-	"frozen",
+	# "on fire",
+	# "colorful",
+	# "frozen",
 	"muddy",
-	"gold",
+	# "gold",
 	"lego",
 	"made of candy",
 	"watercolor painting",
 	"cartoon",
 	"pixel art",
-	"grafiti",
-	"abstract art",
-	"cubism",
+	# "grafiti",
+	# "abstract art",
+	# "cubism",
 	"in space",
-	"underwater",
-	"in a snowstorm",
+	# "underwater",
+	# "in a snowstorm",
 	"on a beach",
-	"expressionist style",
-	"disney style",
+	# "expressionist style",
+	# "disney style",
 	"in a sci-fi world",
 ]
 NEGATIVE_PROMPT = '(worst quality, low quality, blurry:1.3), (bad teeth, deformed teeth, deformed lips), (bad anatomy, bad proportions:1.1), (deformed iris, deformed pupils), (deformed eyes, bad eyes), (deformed face, ugly face, bad face), (deformed hands, bad hands, fused fingers), morbid, mutilated, mutation, disfigured'
@@ -179,7 +179,11 @@ class InferenceConfig:
 	guidance_scale: float = 7.5
 	# Seed to use for inference
 	seed: int = 42
+	# Whether to add a prefix to each prompt describe the object in the image
 	add_image_caption_to_prompts: bool = False
+	#
+	validation_images_path: Optional[Path] = Path("validation_images.txt")
+
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)

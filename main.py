@@ -417,7 +417,8 @@ class Inference:
 	                  inference_prompts: List[str],
 	                  use_sdxl: bool = True,
 	                  use_lcm: bool = False,
-	                  noises: Optional[List[torch.Tensor]] = None) -> List[Image.Image]:
+	                  noises: Optional[List[torch.Tensor]] = None,
+					  training_prompts: Optional[List[str]] = None) -> List[Image.Image]:
 		""" Main inference loop """
 		wandb.init(
 			project="TML Project",
@@ -432,6 +433,7 @@ class Inference:
 		])
 		source_image = transforms(Image.open(cfg.source_image_path).convert("RGB"))
 		target_image = transforms(Image.open(cfg.target_image_path).convert("RGB"))
+		perturbation = np.array(adversarial_image) - np.array(source_image)
 		torch.manual_seed(cfg.seed)
 		
 		source_image_caption = ''
@@ -443,7 +445,11 @@ class Inference:
 			print(f"Running with prefix: {source_image_caption}")
 		
 		output_images = []
-		for prompt in inference_prompts:
+		# Concat inference prompts and training prompts with a tuple that has a prefix of type
+		all_prompts = [(prompt, "Training") for prompt in training_prompts] + [(prompt, "Validation") for prompt in
+																			   inference_prompts]
+
+		for prompt, prompt_type in all_prompts:
 			for noise_idx, noise in enumerate(noises):
 				prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
 				with torch.no_grad():
@@ -464,7 +470,7 @@ class Inference:
 						noise=noise,
 						negative_prompt=NEGATIVE_PROMPT,
 					).images[0]
-				
+
 				# Join all the images together side by side
 				images = [
 					source_image.resize((512, 512)),
@@ -483,9 +489,60 @@ class Inference:
 				joined_image = create_table_plot(images=images, captions=labels)
 				save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 				joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
-				wandb.log({f"val_images": wandb.Image(joined_image, caption=prompt)})
+				wandb.log({f"{prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
 				output_images.append(joined_image)
-				
+
+		if cfg.validation_images_path is not None:
+			# Read paths to validation images
+			with open(cfg.validation_images_path, "r") as f:
+				validation_images_paths = f.readlines()
+				validation_images_paths = [Path(img.strip()) for img in validation_images_paths]
+			for val_image_path in validation_images_paths:
+				val_image = transforms(Image.open(val_image_path).convert("RGB"))
+				val_image_adversarial = np.array(val_image) + perturbation
+				# Clip values and convert back
+				val_image_adversarial = Image.fromarray(np.clip(val_image_adversarial, 0, 255).astype(np.uint8))
+				for prompt, prompt_type in all_prompts:
+					for noise_idx, noise in enumerate(noises):
+						prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
+						with torch.no_grad():
+							val_output_clean = pipeline.__call__(
+								prompt=prompt,
+								image=val_image,
+								num_inference_steps=cfg.n_steps,
+								guidance_scale=cfg.guidance_scale,
+								strength=cfg.strength,
+								negative_prompt=NEGATIVE_PROMPT,
+							).images[0]
+							val_output_adversarial = pipeline.__call__(
+								prompt=prompt,
+								image=val_image_adversarial,
+								num_inference_steps=cfg.n_steps,
+								guidance_scale=cfg.guidance_scale,
+								strength=cfg.strength,
+								noise=noise,
+								negative_prompt=NEGATIVE_PROMPT,
+							).images[0]
+
+						# Join all the images together side by side
+						images = [
+							val_image.resize((512, 512)),
+							val_image_adversarial.resize((512, 512)),
+							val_output_clean.resize((512, 512)),
+							val_output_adversarial.resize((512, 512))
+						]
+						labels = [
+							'Val Original Image',
+							'Val Adversarial Image',
+							f'Edit on Original ({prompt})',
+							f'Edit on Adversarial ({prompt})'
+						]
+						joined_image = create_table_plot(images=images, captions=labels)
+						save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
+						joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
+						wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
+						# output_images.append(joined_image)
+
 		return output_images
 
 
@@ -496,14 +553,14 @@ if __name__ == '__main__':
 	# Source image path
 	source_image_path = Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg")
 	target_image_path = Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg")
-	output_path = Path("/data/yuval/")
+	output_path = Path("/data/elad/")
 	
 	# # Part 1: Training
 	train_cfg = TrainConfig(
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_optimization_steps=250,
+		n_optimization_steps=10#250,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
@@ -532,5 +589,6 @@ if __name__ == '__main__':
 		inference_prompts=INFERENCE_PROMPTS,
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm,
-		noises=trainer.noises
+		noises=trainer.noises,
+		training_prompts=train_cfg.prompts
 	)
