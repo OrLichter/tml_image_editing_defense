@@ -80,6 +80,7 @@ INFERENCE_PROMPTS = [
 	"disney style",
 	"in a sci-fi world",
 ]
+NEGATIVE_PROMPT = '(worst quality, low quality, blurry:1.3), (bad teeth, deformed teeth, deformed lips), (bad anatomy, bad proportions:1.1), (deformed iris, deformed pupils), (deformed eyes, bad eyes), (deformed face, ugly face, bad face), (deformed hands, bad hands, fused fingers), morbid, mutilated, mutation, disfigured'
 
 
 @dataclass
@@ -150,7 +151,7 @@ class TrainConfig:
 		self.target_image = Image.open(self.target_image_path).convert("RGB")
 		if self.norm_type == "l2":
 			self.eps = 32
-			self.step_size = 5
+			self.step_size = 7.5
 			self.grad_reps = 10
 		else:
 			self.eps = 0.1

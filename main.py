@@ -9,13 +9,13 @@ import numpy as np
 import torch
 import wandb
 from PIL import Image
-from diffusers import AutoPipelineForImage2Image, AutoencoderKL, LCMScheduler
+from diffusers import AutoPipelineForImage2Image, AutoencoderKL, LCMScheduler, AutoPipelineForText2Image
 from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 import torchvision.transforms as T
 from transformers import AutoProcessor, Blip2ForConditionalGeneration
 
-from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
+from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS, NEGATIVE_PROMPT
 from data.dataset import ImagePromptDataset
 from losses import losses
 from pipelines.pipeline_stable_diffusion_img2img import StableDiffusionImg2ImgPipeline
@@ -29,7 +29,8 @@ class Trainer:
 		self.use_sdxl = use_sdxl
 		self.use_lcm = use_lcm
 		self.device = cfg.device
-		self.dtype = torch.float32 if cfg.device == "cpu" else torch.float16
+		# self.dtype = torch.float32 if cfg.device == "cpu" else torch.float16
+		self.dtype = torch.float32
 		self.pipeline = self.load_models(
 			use_sdxl=use_sdxl,
 			use_lcm=use_lcm,
@@ -282,6 +283,7 @@ class Trainer:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
 				"stabilityai/stable-diffusion-xl-base-1.0",
 				torch_dtype=dtype,
+				safety_checker=None,
 			)
 			pipeline = pipeline.to(device)
 			vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
@@ -294,9 +296,11 @@ class Trainer:
 			pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
 				"runwayml/stable-diffusion-v1-5",
 				# "SG161222/Realistic_Vision_V6.0_B1_noVAE",
+				# "Lykon/dreamshaper-8",
 				torch_dtype=dtype,
+				safety_checker=None,
 			)
-			vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse").to(dtype=dtype)
+			vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse").to(dtype=dtype).to(device)
 			pipeline.vae = vae
 			pipeline = pipeline.to(device)
 			if use_lcm:
@@ -340,7 +344,7 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				negative_prompt="",
+				negative_prompt=NEGATIVE_PROMPT,
 			)
 		else:
 			(
@@ -351,7 +355,7 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				negative_prompt="",
+				negative_prompt=NEGATIVE_PROMPT,
 			)
 			negative_pooled_prompt_embeds, pooled_prompt_embeds = None, None
 		return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
@@ -422,8 +426,12 @@ class Inference:
 		)
 		
 		pipeline = Trainer.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float32)
-		source_image = Image.open(cfg.source_image_path).convert("RGB")
-		target_image = Image.open(cfg.target_image_path).convert("RGB")
+		transforms = T.Compose([
+			T.Resize(512, interpolation=T.InterpolationMode.BILINEAR),
+			T.CenterCrop(512),
+		])
+		source_image = transforms(Image.open(cfg.source_image_path).convert("RGB"))
+		target_image = transforms(Image.open(cfg.target_image_path).convert("RGB"))
 		torch.manual_seed(cfg.seed)
 		
 		source_image_caption = ''
@@ -438,21 +446,24 @@ class Inference:
 		for prompt in inference_prompts:
 			for noise_idx, noise in enumerate(noises):
 				prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
-				output_clean = pipeline.__call__(
-					prompt=prompt,
-					image=source_image,
-					num_inference_steps=cfg.n_steps,
-					guidance_scale=cfg.guidance_scale,
-					strength=cfg.strength
-				).images[0]
-				output_adversarial = pipeline.__call__(
-					prompt=prompt,
-					image=adversarial_image,
-					num_inference_steps=cfg.n_steps,
-					guidance_scale=cfg.guidance_scale,
-					strength=cfg.strength,
-					noise=noise
-				).images[0]
+				with torch.no_grad():
+					output_clean = pipeline.__call__(
+						prompt=prompt,
+						image=source_image,
+						num_inference_steps=cfg.n_steps,
+						guidance_scale=cfg.guidance_scale,
+						strength=cfg.strength,
+						negative_prompt=NEGATIVE_PROMPT,
+					).images[0]
+					output_adversarial = pipeline.__call__(
+						prompt=prompt,
+						image=adversarial_image,
+						num_inference_steps=cfg.n_steps,
+						guidance_scale=cfg.guidance_scale,
+						strength=cfg.strength,
+						noise=noise,
+						negative_prompt=NEGATIVE_PROMPT,
+					).images[0]
 				
 				# Join all the images together side by side
 				images = [
@@ -499,9 +510,9 @@ if __name__ == '__main__':
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm
 	)
-	adversarial_image = trainer.run()
-	adversarial_image.save(output_path / "adversarial_image.png")
-	torch.save(trainer.noises, output_path / "noise.pt")
+	# adversarial_image = trainer.run()
+	# adversarial_image.save(output_path / "adversarial_image.png")
+	# torch.save(trainer.noises, output_path / "noise.pt")
 	
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 	trainer.noises = torch.load(output_path / "noise.pt")
@@ -513,7 +524,7 @@ if __name__ == '__main__':
 		output_path=output_path,
 		n_steps=4 if use_lcm else 50,
 		guidance_scale=4.0,
-		strength=0.65,
+		strength=0.55,
 	)
 	Inference.run_inference(
 		cfg=inference_cfg,
