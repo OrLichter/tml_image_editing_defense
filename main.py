@@ -450,7 +450,14 @@ class Inference:
 		all_prompts = [(prompt, "Validation") for prompt in inference_prompts]
 
 		for prompt, prompt_type in all_prompts:
-			for noise_idx, noise in enumerate(noises):
+			
+			# If noises are not given, get n_noise random noise tensors for each prompt
+			noises_for_prompt = noises
+			if noises is None:
+				noises_for_prompt = [randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32)
+				                     for _ in range(cfg.n_noise)]
+				
+			for noise_idx, noise in enumerate(noises_for_prompt):
 				prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
 				with torch.no_grad():
 					output_clean = pipeline.__call__(
@@ -563,6 +570,7 @@ if __name__ == '__main__':
 		target_image_path=target_image_path,
 		output_path=output_path,
 		n_optimization_steps=250,
+		guidance_scale=4.0,
 		n_noise=2,
 		use_fixed_noise=True,
 	)
@@ -590,12 +598,11 @@ if __name__ == '__main__':
 		use_fixed_noise=True,
 		n_noise=train_cfg.n_noise,
 	)
+	
+	inference_noises = None
 	if inference_cfg.use_fixed_noise:
 		inference_noises = trainer.noises
-	else:
-		inference_noises = [
-			randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(inference_cfg.n_noise)
-		]
+
 	Inference.run_inference(
 		cfg=inference_cfg,
 		adversarial_image=adversarial_image,
