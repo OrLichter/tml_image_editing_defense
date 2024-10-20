@@ -304,7 +304,7 @@ class Trainer:
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
-				pipeline.fuse_lora()
+				pipeline.fuse_lora(lora_scale=0.7)
 		return pipeline
 	
 	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -410,6 +410,24 @@ class Trainer:
 class Inference:
 	
 	@staticmethod
+	def transfer_perturbation(original_perturbation, original_image, new_image):
+		# Calculate scaling factor based on standard deviation
+		std_ratio = np.std(new_image) / np.std(original_image)
+		# Cap the scaling factor to prevent amplification
+		scale_factor = min(1, std_ratio)
+		# Scale the perturbation
+		scaled_perturbation = original_perturbation * scale_factor
+		# Normalize the perturbation to have a maximum absolute value
+		max_perturbation_value = 20  # You can adjust this value as needed
+		scaled_perturbation = np.clip(scaled_perturbation, -max_perturbation_value, max_perturbation_value)
+		# Apply the scaled perturbation to the new image
+		# perturbed_image = new_image + scaled_perturbation
+		perturbed_image = new_image - scaled_perturbation
+		# Clip pixel values to valid range
+		perturbed_image = np.clip(perturbed_image, 0, 255)
+		return perturbed_image.astype(np.uint8)
+	
+	@staticmethod
 	def run_inference(cfg: InferenceConfig,
 	                  adversarial_image: Image.Image,
 	                  inference_prompts: List[str],
@@ -449,7 +467,8 @@ class Inference:
 		#                [(prompt, "Validation") for prompt in inference_prompts])
 		all_prompts = [(prompt, "Validation") for prompt in inference_prompts]
 
-		for prompt, prompt_type in all_prompts:
+		# for prompt, prompt_type in all_prompts:
+		for prompt, prompt_type in []:
 			
 			# If noises are not given, get n_noise random noise tensors for each prompt
 			noises_for_prompt = noises
@@ -507,12 +526,25 @@ class Inference:
 				validation_images_paths = [Path(img.strip()) for img in validation_images_paths]
 				
 			for val_image_path in validation_images_paths:
+				
 				val_image = transforms(Image.open(val_image_path).convert("RGB"))
-				val_image_adversarial = np.array(val_image) + perturbation
+				# val_image_adversarial = np.array(val_image) + perturbation
 				# Clip values and convert back
-				val_image_adversarial = Image.fromarray(np.clip(val_image_adversarial, 0, 255).astype(np.uint8))
+				# val_image_adversarial = Image.fromarray(np.clip(val_image_adversarial, 0, 255).astype(np.uint8))
+				val_image_adversarial = Inference.transfer_perturbation(perturbation,
+				                                                        original_image=np.array(source_image),
+				                                                        new_image=np.array(val_image))
+				val_image_adversarial = Image.fromarray(val_image_adversarial.astype(np.uint8))
+				
 				for prompt, prompt_type in all_prompts:
-					for noise_idx, noise in enumerate(noises):
+					
+					# If noises are not given, get n_noise random noise tensors for each prompt
+					noises_for_prompt = noises
+					if noises is None:
+						noises_for_prompt = [randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32)
+						                     for _ in range(cfg.n_noise)]
+					
+					for noise_idx, noise in enumerate(noises_for_prompt):
 						prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
 						with torch.no_grad():
 							val_output_clean = pipeline.__call__(
@@ -550,7 +582,6 @@ class Inference:
 						save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 						joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
 						wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
-						# output_images.append(joined_image)
 
 		return output_images
 
@@ -579,9 +610,9 @@ if __name__ == '__main__':
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm
 	)
-	adversarial_image = trainer.run()
-	adversarial_image.save(output_path / "adversarial_image.png")
-	torch.save(trainer.noises, output_path / "noise.pt")
+	# adversarial_image = trainer.run()
+	# adversarial_image.save(output_path / "adversarial_image.png")
+	# torch.save(trainer.noises, output_path / "noise.pt")
 	
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 	trainer.noises = torch.load(output_path / "noise.pt")
@@ -594,9 +625,10 @@ if __name__ == '__main__':
 		output_path=output_path,
 		n_steps=4 if use_lcm else 50,
 		guidance_scale=4.0,
-		strength=0.60,
+		strength=0.95,
 		use_fixed_noise=True,
 		n_noise=train_cfg.n_noise,
+		# validation_images_path=None,
 	)
 	
 	inference_noises = None
@@ -610,5 +642,5 @@ if __name__ == '__main__':
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm,
 		noises=inference_noises,
-		training_prompts=train_cfg.prompts
+		training_prompts=train_cfg.prompts,
 	)

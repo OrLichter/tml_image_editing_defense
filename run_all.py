@@ -1,3 +1,4 @@
+import os
 import random
 from pathlib import Path
 import torch
@@ -11,6 +12,14 @@ output_root = Path('/data/yuval/tml_experiments')
 output_root.mkdir(exist_ok=True, parents=True)
 
 image_paths = [p for p in Path('./images').glob("*") if p.suffix in ['.jpg', '.png', '.jpeg']]
+
+# Split the image_paths into two sets
+image_paths = image_paths[:len(image_paths) // 2]
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# image_paths = image_paths[len(image_paths) // 2:]
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 for image_path in image_paths:
 	image_output_path = output_root / image_path.stem
 	for n_prompts in [1, 10, 25, None]:
@@ -23,7 +32,7 @@ for image_path in image_paths:
 		else:
 			sampled_prompts = [""] + random.sample(PROMPTS_LIST, n_prompts - 1)
 		
-		for n_noises in [1, 2, 3, 5, None]:
+		for n_noises in [1, 3, 5, None]:
 		
 			experiment_output_root = image_output_path / f"n_noises_{n_noises}" / f"n_prompts_{n_prompts}"
 			experiment_output_root.mkdir(exist_ok=True, parents=True)
