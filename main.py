@@ -501,10 +501,10 @@ if __name__ == '__main__':
 	)
 	adversarial_image = trainer.run()
 	adversarial_image.save(output_path / "adversarial_image.png")
-	torch.save(trainer.noise, output_path / "noise.pt")
+	torch.save(trainer.noises, output_path / "noise.pt")
 	
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
-	trainer.noise = torch.load(output_path / "noise.pt")
+	trainer.noises = torch.load(output_path / "noise.pt")
 	
 	# Part 2: Inference
 	inference_cfg = InferenceConfig(
