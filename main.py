@@ -504,33 +504,44 @@ if __name__ == '__main__':
 		target_image_path=target_image_path,
 		output_path=output_path,
 		n_optimization_steps=250,
+		n_noise=5,
+		use_fixed_noise=True,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm
 	)
-	adversarial_image = trainer.run()
-	adversarial_image.save(output_path / "adversarial_image.png")
-	torch.save(trainer.noises, output_path / "noise.pt")
+	# adversarial_image = trainer.run()
+	# adversarial_image.save(output_path / "adversarial_image.png")
+	# torch.save(trainer.noises, output_path / "noise.pt")
 	
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 	trainer.noises = torch.load(output_path / "noise.pt")
 	
 	# Part 2: Inference
 	inference_cfg = InferenceConfig(
+		experiment_name='use_train_noises',
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
 		n_steps=4 if use_lcm else 50,
 		guidance_scale=4.0,
 		strength=0.55,
+		use_fixed_noise=True,
+		n_noise=train_cfg.n_noise,
 	)
+	if inference_cfg.use_fixed_noise:
+		inference_noises = trainer.noises
+	else:
+		inference_noises = [
+			randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(inference_cfg.n_noise)
+		]
 	Inference.run_inference(
 		cfg=inference_cfg,
 		adversarial_image=adversarial_image,
 		inference_prompts=INFERENCE_PROMPTS,
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm,
-		noises=trainer.noises
+		noises=inference_noises
 	)

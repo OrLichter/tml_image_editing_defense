@@ -179,7 +179,12 @@ class InferenceConfig:
 	guidance_scale: float = 7.5
 	# Seed to use for inference
 	seed: int = 42
+	# Whether to add a prefix to each prompt describe the object in the image
 	add_image_caption_to_prompts: bool = False
+	# Whether to use the same noises as training
+	use_fixed_noise: bool = True
+	# How many noises to use for inference if not running with fixed noise
+	n_noise: int = 1
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
