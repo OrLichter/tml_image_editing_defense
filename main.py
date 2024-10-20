@@ -483,8 +483,8 @@ if __name__ == '__main__':
 	use_lcm = True
 	
 	# Source image path
-	source_image_path = Path("data/images/japan.jpg")
-	target_image_path = Path("data/images/japan.jpg")
+	source_image_path = Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg")
+	target_image_path = Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg")
 	output_path = Path("/data/yuval/")
 	
 	# # Part 1: Training
