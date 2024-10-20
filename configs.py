@@ -1,6 +1,6 @@
 from dataclasses import field, dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from PIL import Image
 
@@ -185,6 +185,8 @@ class InferenceConfig:
 	use_fixed_noise: bool = True
 	# How many noises to use for inference if not running with fixed noise
 	n_noise: int = 1
+	# Validation images (not seen during training)
+	validation_images_path: Optional[Path] = Path("validation_images.txt")
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)
