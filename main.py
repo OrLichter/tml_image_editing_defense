@@ -489,7 +489,7 @@ class Inference:
 				joined_image = create_table_plot(images=images, captions=labels)
 				save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 				joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
-				wandb.log({f"{prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
+				wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
 				output_images.append(joined_image)
 
 		if cfg.validation_images_path is not None:
@@ -560,7 +560,7 @@ if __name__ == '__main__':
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_optimization_steps=10#250,
+		n_optimization_steps=250,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
