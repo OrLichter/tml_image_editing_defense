@@ -8,7 +8,7 @@ from configs import TrainConfig, PROMPTS_LIST, InferenceConfig, INFERENCE_PROMPT
 from main import Trainer, Inference
 
 
-output_root = Path('/data/yuval/tml_experiments')
+output_root = Path('/data/yuval/tml_experiments/final_experiments')
 output_root.mkdir(exist_ok=True, parents=True)
 
 image_paths = [p for p in Path('./images').glob("*") if p.suffix in ['.jpg', '.png', '.jpeg']]
@@ -44,14 +44,15 @@ for image_path in image_paths:
 				experiment_name=f'{image_path.stem}_n_noises_{n_noises}_n_prompts_{n_prompts}',
 				source_image_paths=[image_path],
 				target_image_paths=[image_path],
-				default_source_image_caption="",
 				output_path=image_output_path,
 				n_optimization_steps=150,
 				n_noise=n_noises,
 				use_fixed_noise=True if n_noises is not None else False,
 				prompts=sampled_prompts,
 				seed=seed,
-				guidance_scale=3.0,
+				guidance_scale=4.0,
+				add_image_caption_to_prompts=False,
+				default_source_image_caption="",
 			)
 			trainer = Trainer(
 				cfg=train_cfg,
@@ -76,6 +77,8 @@ for image_path in image_paths:
 				strength=0.60,
 				use_fixed_noise=True if n_noises is not None else False,
 				n_noise=len(trainer.noises) if n_noises is not None else 1,
+				add_image_caption_to_prompts=False,
+				default_source_image_caption=""
 			)
 			
 			inference_noises = None
@@ -89,5 +92,4 @@ for image_path in image_paths:
 				use_sdxl=False,
 				use_lcm=True,
 				noises=inference_noises,
-				training_prompts=train_cfg.prompts,
 			)

@@ -3,7 +3,6 @@ import inspect
 import os
 from pathlib import Path
 from typing import List, Tuple, Union, Optional
-from transformers import pipeline
 
 import numpy as np
 import torch
@@ -14,7 +13,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 import torchvision.transforms as T
 
-from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS, NEGATIVE_PROMPT
+from configs import TrainConfig, InferenceConfig, INFERENCE_PROMPTS
 from data.dataset import ImagePromptDataset
 from losses import losses
 from pipelines.pipeline_stable_diffusion_img2img import StableDiffusionImg2ImgPipeline
@@ -28,7 +27,6 @@ class Trainer:
 		self.use_sdxl = use_sdxl
 		self.use_lcm = use_lcm
 		self.device = cfg.device
-		# self.dtype = torch.float32 if cfg.device == "cpu" else torch.float16
 		self.dtype = torch.float32
 		self.pipeline = self.load_models(
 			use_sdxl=use_sdxl,
@@ -40,16 +38,12 @@ class Trainer:
 		if self.cfg.use_fixed_noise:
 			noise_shape = (1, 4, 64, 64)
 			self.noises = [
-				randn_tensor(noise_shape, device=self.device, dtype=self.dtype) for _ in range(self.cfg.n_noise)
+				randn_tensor(noise_shape, device=torch.device(self.device), dtype=self.dtype)
+				for _ in range(self.cfg.n_noise)
 			]
 	
 	def run(self) -> Tuple[Image.Image, torch.Tensor]:
 		""" Main training loop """
-		# Verify that the W&B API key is defined as env variable
-		# if "WANDB_API_KEY" in os.environ:
-		# 	print('Using W&B API key from env')
-		# else:
-		# 	raise Exception("Please provide a valid W&B API key in env")
 		wandb.init(
 			project="TML Project",
 			config=dataclasses.asdict(self.cfg),
@@ -66,16 +60,13 @@ class Trainer:
 			dtype=self.dtype,
 			cfg=self.cfg
 		)
-		dataloader = torch.utils.data.DataLoader(
-			dataset,
-			batch_size=1,
-			shuffle=False
-		)
+		dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False)
 		
 		iterator = tqdm(range(self.cfg.n_optimization_steps))
 		
 		# Initialize the perturbation
 		perturbation = torch.zeros((1, 3, 512, 512), requires_grad=True, device=self.device, dtype=self.dtype)
+		X_adv = None
 		
 		for iteration in iterator:
 			all_grads = []
@@ -159,18 +150,16 @@ class Trainer:
 		return adversarial_image, perturbation
 	
 	def compute_grad(self,
-					 cur_image: torch.Tensor,
-					 prompt: str,
-					 source_image: torch.Tensor,
-					 target_image: torch.Tensor,
-					 target_latent: torch.Tensor,
-					 noise: Optional[List[torch.Tensor]] = None) -> Tuple[
+	                 cur_image: torch.Tensor,
+	                 prompt: str,
+	                 source_image: torch.Tensor,
+	                 target_image: torch.Tensor,
+	                 target_latent: torch.Tensor,
+	                 noise: Optional[List[torch.Tensor]] = None) -> Tuple[
 		torch.Tensor, torch.Tensor, torch.Tensor, dict]:
 		torch.set_grad_enabled(True)
 		
 		cur_image = cur_image.clone()
-		# cur_image.requires_grad = True
-		
 		output_latent = self.attack_forward(image=cur_image, prompt=prompt, noise=noise)
 		output_image = self.pipeline.vae.decode(output_latent).sample
 		
@@ -196,9 +185,9 @@ class Trainer:
 		return grad, loss.item(), output_image, loss_dict
 	
 	def attack_forward(self,
-					   prompt: Union[str, List[str]],
-					   image: Union[torch.Tensor, Image.Image],
-					   noise: Optional[List[torch.Tensor]] = None) -> torch.Tensor:
+	                   prompt: Union[str, List[str]],
+	                   image: Union[torch.Tensor, Image.Image],
+	                   noise: Optional[List[torch.Tensor]] = None) -> torch.Tensor:
 		
 		# Encode the prompt
 		embeds = self._encode_prompt(prompt)
@@ -228,7 +217,7 @@ class Trainer:
 		
 		# Add noise to the input latent
 		if noise is None:
-			noise = [randn_tensor(image_latents.shape, device=self.device, dtype=self.dtype)]
+			noise = [randn_tensor(image_latents.shape, device=torch.device(self.device), dtype=self.dtype)]
 		
 		# Randomly sample a noise tensor from the list of noise tensors
 		selected_noise = noise[np.random.randint(0, len(noise))]
@@ -259,16 +248,16 @@ class Trainer:
 			noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
 			noise_pred = noise_pred_uncond + self.cfg.guidance_scale * (noise_pred_text - noise_pred_uncond)
 			latents = self.pipeline.scheduler.step(noise_pred, t, latents, **extra_step_kwargs,
-												   return_dict=True).prev_sample
+			                                       return_dict=True).prev_sample
 		
 		latents = 1 / 0.18215 * latents
 		return latents
 	
 	def perturbation_step(self,
-						  X_adv: torch.Tensor,
-						  grad: torch.Tensor,
-						  X: torch.Tensor,
-						  X_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+	                      X_adv: torch.Tensor,
+	                      grad: torch.Tensor,
+	                      X: torch.Tensor,
+	                      X_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""Apply the perturbation step for either L2 or Linf norm."""
 		if self.cfg.norm_type == 'l2':
 			# Normalize gradient for L2 norm
@@ -299,9 +288,9 @@ class Trainer:
 	
 	@staticmethod
 	def load_models(use_sdxl: bool = True,
-					use_lcm: bool = False,
-					device: str = "cuda",
-					dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
+	                use_lcm: bool = False,
+	                device: str = "cuda",
+	                dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
 		if use_sdxl:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
 				"stabilityai/stable-diffusion-xl-base-1.0",
@@ -342,7 +331,6 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				# negative_prompt=NEGATIVE_PROMPT,
 			)
 		else:
 			(
@@ -353,15 +341,14 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				# negative_prompt=NEGATIVE_PROMPT,
 			)
 			negative_pooled_prompt_embeds, pooled_prompt_embeds = None, None
 		return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 	
 	def get_sdxl_additional_inputs(self,
-								   prompt_embeds: torch.Tensor,
-								   pooled_prompt_embeds: torch.Tensor,
-								   negative_pooled_prompt_embeds: torch.Tensor) -> dict:
+	                               prompt_embeds: torch.Tensor,
+	                               pooled_prompt_embeds: torch.Tensor,
+	                               negative_pooled_prompt_embeds: torch.Tensor) -> dict:
 		add_text_embeds = pooled_prompt_embeds
 		text_encoder_projection_dim = self.pipeline.text_encoder_2.config.projection_dim
 		add_time_ids = self._get_add_time_ids(
@@ -387,11 +374,11 @@ class Trainer:
 	
 	@staticmethod
 	def _get_add_time_ids(unet,
-						  original_size: Tuple[int, int] = (512, 512),
-						  crops_coords_top_left: Tuple[int, int] = (0, 0),
-						  target_size: Tuple[int, int] = (512, 512),
-						  dtype: torch.dtype = torch.float16,
-						  text_encoder_projection_dim: int = 1280) -> torch.Tensor:
+	                      original_size: Tuple[int, int] = (512, 512),
+	                      crops_coords_top_left: Tuple[int, int] = (0, 0),
+	                      target_size: Tuple[int, int] = (512, 512),
+	                      dtype: torch.dtype = torch.float16,
+	                      text_encoder_projection_dim: int = 1280) -> torch.Tensor:
 		add_time_ids = list(original_size + crops_coords_top_left + target_size)
 		passed_add_embed_dim = (
 				unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
@@ -428,11 +415,11 @@ class Inference:
 	
 	@staticmethod
 	def run_inference(cfg: InferenceConfig,
-					  perturbation: torch.Tensor,
-					  inference_prompts: List[str],
-					  use_sdxl: bool = True,
-					  use_lcm: bool = False,
-					  noises: Optional[List[torch.Tensor]] = None) -> List[Image.Image]:
+	                  perturbation: torch.Tensor,
+	                  inference_prompts: List[str],
+	                  use_sdxl: bool = True,
+	                  use_lcm: bool = False,
+	                  noises: Optional[List[torch.Tensor]] = None) -> List[Image.Image]:
 		""" Main inference loop """
 		wandb.init(
 			project="TML Project",
@@ -455,14 +442,14 @@ class Inference:
 		source_images = [resize_transforms(Image.open(path).convert("RGB")) for path in cfg.source_image_paths]
 		target_images = [resize_transforms(Image.open(path).convert("RGB")) for path in cfg.target_image_paths]
 		source_tensors = [transforms(image) for image in source_images]
-
+		
 		# Define the adversarial image by adding the perturbation to the source image
 		adversarial_images = [
 			(((image + perturbation[0]).numpy() + 1) * 127.5).astype(np.uint8).transpose(1, 2, 0)
 			for image in source_tensors
 		]
 		adversarial_images = [Image.fromarray(np.clip(image, 0, 255).astype(np.uint8)) for image in adversarial_images]
-
+		
 		source_image_captions = [''] * len(source_images)
 		if cfg.default_source_image_caption != "" or cfg.add_image_caption_to_prompts:
 			if cfg.default_source_image_caption != "":
@@ -476,9 +463,10 @@ class Inference:
 		
 		# Concat inference prompts and training prompts with a tuple that has a prefix of type
 		all_prompts = [(prompt, "Validation") for prompt in inference_prompts]
-
-		for source_image, target_image, adversarial_image, prefix in zip(source_images, target_images, adversarial_images, source_image_captions):
 		
+		for source_image, target_image, adversarial_image, prefix in zip(source_images, target_images,
+		                                                                 adversarial_images, source_image_captions):
+			
 			# for prompt, prompt_type in all_prompts:
 			for prompt, prompt_type in []:
 				
@@ -486,7 +474,8 @@ class Inference:
 				noises_for_prompt = noises
 				if noises is None:
 					noises_for_prompt = [
-						randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(cfg.n_noise)
+						randn_tensor((1, 4, 64, 64), device=torch.device('cuda'), dtype=torch.float32)
+						for _ in range(cfg.n_noise)
 					]
 				
 				for noise_idx, noise in enumerate(noises_for_prompt):
@@ -508,7 +497,7 @@ class Inference:
 							strength=cfg.strength,
 							noise=noise,
 						).images[0]
-	
+					
 					# Join all the images together side by side
 					images = [
 						source_image.resize((512, 512)),
@@ -562,7 +551,8 @@ class Inference:
 					noises_for_prompt = noises
 					if noises is None:
 						noises_for_prompt = [
-							randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(cfg.n_noise)
+							randn_tensor((1, 4, 64, 64), device=torch.device('cuda'), dtype=torch.float32)
+							for _ in range(cfg.n_noise)
 						]
 					
 					for noise_idx, noise in enumerate(noises_for_prompt):
@@ -584,7 +574,7 @@ class Inference:
 								strength=cfg.strength,
 								noise=noise,
 							).images[0]
-
+						
 						# Join all the images together side by side
 						images = [
 							val_image.resize((512, 512)),
@@ -604,8 +594,8 @@ class Inference:
 						wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
 		
 		return output_images
-	
-	
+
+
 def main():
 	use_sdxl = False
 	use_lcm_training = True
@@ -622,25 +612,25 @@ def main():
 	]
 	output_path = Path("/data/yuval/")
 	
-	# # Part 1: Training
+	# Part 1: Training
 	train_cfg = TrainConfig(
 		source_image_paths=source_image_paths,
 		target_image_paths=target_image_paths,
 		output_path=output_path,
-		n_optimization_steps=100,
+		n_optimization_steps=150,
 		guidance_scale=4.0,
 		n_noise=1,
-		use_fixed_noise=True,
+		use_fixed_noise=False,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm_training
 	)
-	# adversarial_image, perturbation = trainer.run()
-	# adversarial_image.save(output_path / "adversarial_image.png")
-	# torch.save(trainer.noises, output_path / "noise.pt")
-	# torch.save(perturbation, output_path / "perturbation.pt")
+	adversarial_image, perturbation = trainer.run()
+	adversarial_image.save(output_path / "adversarial_image.png")
+	torch.save(trainer.noises, output_path / "noise.pt")
+	torch.save(perturbation, output_path / "perturbation.pt")
 	
 	trainer.noises = torch.load(output_path / "noise.pt")
 	perturbation = torch.load(output_path / "perturbation.pt")
@@ -654,7 +644,7 @@ def main():
 		n_steps=4 if use_lcm_inference else 50,
 		guidance_scale=4.0,
 		strength=0.60,
-		use_fixed_noise=True,
+		use_fixed_noise=train_cfg.use_fixed_noise,
 		n_noise=train_cfg.n_noise,
 		validation_images_path=Path("validation_images.txt"),
 		default_source_image_caption="",
