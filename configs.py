@@ -59,8 +59,8 @@ PROMPTS_LIST = [
 	"in an enchanted forest",
 ]
 INFERENCE_PROMPTS = [
-	"on fire",
-	"colorful",
+	# "on fire",
+	# "colorful",
 	"frozen",
 	"muddy",
 	"gold",

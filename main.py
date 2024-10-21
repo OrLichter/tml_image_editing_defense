@@ -84,6 +84,7 @@ class Trainer:
 			output_image = None
 			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
 			prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
+			prompt = f"{prompt}, detailed"
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
 				c_grad, loss, output_image, loss_dict = self.compute_grad(
@@ -304,7 +305,7 @@ class Trainer:
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
-				pipeline.fuse_lora(lora_scale=0.7)
+				pipeline.fuse_lora()
 		return pipeline
 	
 	def _process_images(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -342,7 +343,7 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				negative_prompt=NEGATIVE_PROMPT,
+				# negative_prompt=NEGATIVE_PROMPT,
 			)
 		else:
 			(
@@ -353,7 +354,7 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				negative_prompt=NEGATIVE_PROMPT,
+				# negative_prompt=NEGATIVE_PROMPT,
 			)
 			negative_pooled_prompt_embeds, pooled_prompt_embeds = None, None
 		return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
@@ -467,8 +468,8 @@ class Inference:
 		#                [(prompt, "Validation") for prompt in inference_prompts])
 		all_prompts = [(prompt, "Validation") for prompt in inference_prompts]
 
-		# for prompt, prompt_type in all_prompts:
-		for prompt, prompt_type in []:
+		for prompt, prompt_type in all_prompts:
+		# for prompt, prompt_type in []:
 			
 			# If noises are not given, get n_noise random noise tensors for each prompt
 			noises_for_prompt = noises
@@ -478,6 +479,7 @@ class Inference:
 				
 			for noise_idx, noise in enumerate(noises_for_prompt):
 				prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
+				prompt = f"{prompt}, detailed"
 				with torch.no_grad():
 					output_clean = pipeline.__call__(
 						prompt=prompt,
@@ -485,7 +487,7 @@ class Inference:
 						num_inference_steps=cfg.n_steps,
 						guidance_scale=cfg.guidance_scale,
 						strength=cfg.strength,
-						negative_prompt=NEGATIVE_PROMPT,
+						# negative_prompt=NEGATIVE_PROMPT,
 					).images[0]
 					output_adversarial = pipeline.__call__(
 						prompt=prompt,
@@ -494,7 +496,7 @@ class Inference:
 						guidance_scale=cfg.guidance_scale,
 						strength=cfg.strength,
 						noise=noise,
-						negative_prompt=NEGATIVE_PROMPT,
+						# negative_prompt=NEGATIVE_PROMPT,
 					).images[0]
 
 				# Join all the images together side by side
@@ -546,6 +548,7 @@ class Inference:
 					
 					for noise_idx, noise in enumerate(noises_for_prompt):
 						prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
+						prompt = f"{prompt}, detailed"
 						with torch.no_grad():
 							val_output_clean = pipeline.__call__(
 								prompt=prompt,
@@ -553,7 +556,7 @@ class Inference:
 								num_inference_steps=cfg.n_steps,
 								guidance_scale=cfg.guidance_scale,
 								strength=cfg.strength,
-								negative_prompt=NEGATIVE_PROMPT,
+								# negative_prompt=NEGATIVE_PROMPT,
 							).images[0]
 							val_output_adversarial = pipeline.__call__(
 								prompt=prompt,
@@ -562,7 +565,7 @@ class Inference:
 								guidance_scale=cfg.guidance_scale,
 								strength=cfg.strength,
 								noise=noise,
-								negative_prompt=NEGATIVE_PROMPT,
+								# negative_prompt=NEGATIVE_PROMPT,
 							).images[0]
 
 						# Join all the images together side by side
@@ -588,7 +591,8 @@ class Inference:
 
 if __name__ == '__main__':
 	use_sdxl = False
-	use_lcm = True
+	use_lcm_training = True
+	use_lcm_inference = False
 	
 	# Source image path
 	source_image_path = Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg")
@@ -600,19 +604,19 @@ if __name__ == '__main__':
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_optimization_steps=250,
+		n_optimization_steps=100,
 		guidance_scale=4.0,
-		n_noise=2,
+		n_noise=1,
 		use_fixed_noise=True,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
 		use_sdxl=use_sdxl,
-		use_lcm=use_lcm
+		use_lcm=use_lcm_training
 	)
-	# adversarial_image = trainer.run()
-	# adversarial_image.save(output_path / "adversarial_image.png")
-	# torch.save(trainer.noises, output_path / "noise.pt")
+	adversarial_image = trainer.run()
+	adversarial_image.save(output_path / "adversarial_image.png")
+	torch.save(trainer.noises, output_path / "noise.pt")
 	
 	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 	trainer.noises = torch.load(output_path / "noise.pt")
@@ -623,12 +627,13 @@ if __name__ == '__main__':
 		source_image_path=source_image_path,
 		target_image_path=target_image_path,
 		output_path=output_path,
-		n_steps=4 if use_lcm else 50,
+		n_steps=4 if use_lcm_inference else 50,
 		guidance_scale=4.0,
-		strength=0.95,
+		strength=0.60,
 		use_fixed_noise=True,
 		n_noise=train_cfg.n_noise,
-		# validation_images_path=None,
+		validation_images_path=None,
+		default_source_image_caption="",
 	)
 	
 	inference_noises = None
@@ -639,8 +644,8 @@ if __name__ == '__main__':
 		cfg=inference_cfg,
 		adversarial_image=adversarial_image,
 		inference_prompts=INFERENCE_PROMPTS,
-		use_sdxl=use_sdxl,
-		use_lcm=use_lcm,
+		use_sdxl=False,
+		use_lcm=use_lcm_inference,
 		noises=inference_noises,
 		training_prompts=train_cfg.prompts,
 	)
