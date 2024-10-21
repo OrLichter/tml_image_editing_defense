@@ -59,26 +59,26 @@ PROMPTS_LIST = [
 	"in an enchanted forest",
 ]
 INFERENCE_PROMPTS = [
-	"on fire",
-	"colorful",
 	"frozen",
 	"muddy",
-	"gold",
 	"lego",
-	"made of candy",
 	"watercolor painting",
 	"cartoon",
 	"pixel art",
-	"grafiti",
-	"abstract art",
-	"cubism",
+	"graffiti",
 	"in space",
-	"underwater",
 	"in a snowstorm",
 	"on a beach",
-	"expressionist style",
-	"disney style",
-	"in a sci-fi world",
+	"poorly drawn",
+	"A scene made from flowers, 8k",
+	"A pixelated video game",
+	"full of people",
+	"in a magical swamp",
+	"ink wash",
+	"low-poly",
+	"noir",
+	"pointillism",
+	"retro anime"
 ]
 NEGATIVE_PROMPT = '(worst quality, low quality, blurry:1.3), (bad teeth, deformed teeth, deformed lips), (bad anatomy, bad proportions:1.1), (deformed iris, deformed pupils), (deformed eyes, bad eyes), (deformed face, ugly face, bad face), (deformed hands, bad hands, fused fingers), morbid, mutilated, mutation, disfigured'
 

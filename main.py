@@ -45,7 +45,7 @@ class Trainer:
 	def run(self) -> Tuple[Image.Image, torch.Tensor]:
 		""" Main training loop """
 		wandb.init(
-			project="TML Project",
+			project="TML Project - Final Runs",
 			config=dataclasses.asdict(self.cfg),
 			name=self.cfg.experiment_name,
 		)
@@ -422,7 +422,7 @@ class Inference:
 	                  noises: Optional[List[torch.Tensor]] = None) -> List[Image.Image]:
 		""" Main inference loop """
 		wandb.init(
-			project="TML Project",
+			project="TML Project - Final Runs",
 			config=dataclasses.asdict(cfg),
 			name=cfg.experiment_name,
 		)
@@ -596,7 +596,7 @@ class Inference:
 		return output_images
 
 
-def main():
+def example():
 	use_sdxl = False
 	use_lcm_training = True
 	use_lcm_inference = True
@@ -665,4 +665,4 @@ def main():
 
 
 if __name__ == '__main__':
-	main()
+	example()
