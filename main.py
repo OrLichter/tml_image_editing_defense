@@ -410,7 +410,7 @@ class Trainer:
 class Inference:
 	
 	@staticmethod
-	def transfer_perturbation(original_perturbation, original_image, new_image):
+	def transfer_perturbation(original_perturbation, original_image, new_image, max_perturbation_value: int = 20):
 		# Calculate scaling factor based on standard deviation
 		std_ratio = np.std(new_image) / np.std(original_image)
 		# Cap the scaling factor to prevent amplification
@@ -418,7 +418,6 @@ class Inference:
 		# Scale the perturbation
 		scaled_perturbation = original_perturbation * scale_factor
 		# Normalize the perturbation to have a maximum absolute value
-		max_perturbation_value = 20  # You can adjust this value as needed
 		scaled_perturbation = np.clip(scaled_perturbation, -max_perturbation_value, max_perturbation_value)
 		# Apply the scaled perturbation to the new image
 		# perturbed_image = new_image + scaled_perturbation
@@ -481,7 +480,7 @@ class Inference:
 		for source_image, target_image, adversarial_image, prefix in zip(source_images, target_images, adversarial_images, source_image_captions):
 		
 			# for prompt, prompt_type in all_prompts:
-			for prompt, prompt_type in all_prompts:
+			for prompt, prompt_type in []:
 				
 				# If noises are not given, get n_noise random noise tensors for each prompt
 				noises_for_prompt = noises
@@ -500,7 +499,6 @@ class Inference:
 							num_inference_steps=cfg.n_steps,
 							guidance_scale=cfg.guidance_scale,
 							strength=cfg.strength,
-							# negative_prompt=NEGATIVE_PROMPT,
 						).images[0]
 						output_adversarial = pipeline.__call__(
 							prompt=prompt,
@@ -509,7 +507,6 @@ class Inference:
 							guidance_scale=cfg.guidance_scale,
 							strength=cfg.strength,
 							noise=noise,
-							# negative_prompt=NEGATIVE_PROMPT,
 						).images[0]
 	
 					# Join all the images together side by side
@@ -542,16 +539,20 @@ class Inference:
 			
 			for val_image_path in validation_images_paths:
 				
-				val_image = transforms(Image.open(val_image_path).convert("RGB"))
+				val_image = resize_transforms(Image.open(val_image_path).convert("RGB"))
 				# For the original image, take the average image of those seen during training
 				avg_image = torch.stack(source_tensors).mean(0)
-				avg_image = Image.fromarray(((avg_image.permute(1, 2, 0).numpy() + 1) * 127.5).astype('uint8'))
+				avg_image_np = ((avg_image.numpy().transpose(1, 2, 0) + 1) * 127.5).astype('uint8')
+				# Extract perturbation from one of the source images
+				perturbation_np = np.array(adversarial_images[0]) - np.array(source_images[0])
+				val_image_np = np.array(val_image)
 				val_image_adversarial = Inference.transfer_perturbation(
-					perturbation,
-					original_image=np.array(avg_image),
-					new_image=np.array(val_image)
+					original_perturbation=perturbation_np,
+					original_image=avg_image_np,
+					new_image=val_image_np,
+					max_perturbation_value=20
 				)
-				val_image_adversarial = Image.fromarray(val_image_adversarial.astype(np.uint8))
+				val_image_adversarial = Image.fromarray(val_image_adversarial).convert("RGB")
 				
 				source_image_caption = ""  # Don't use prefix for this test
 				
@@ -560,8 +561,9 @@ class Inference:
 					# If noises are not given, get n_noise random noise tensors for each prompt
 					noises_for_prompt = noises
 					if noises is None:
-						noises_for_prompt = [randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32)
-											 for _ in range(cfg.n_noise)]
+						noises_for_prompt = [
+							randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(cfg.n_noise)
+						]
 					
 					for noise_idx, noise in enumerate(noises_for_prompt):
 						prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
@@ -573,7 +575,6 @@ class Inference:
 								num_inference_steps=cfg.n_steps,
 								guidance_scale=cfg.guidance_scale,
 								strength=cfg.strength,
-								# negative_prompt=NEGATIVE_PROMPT,
 							).images[0]
 							val_output_adversarial = pipeline.__call__(
 								prompt=prompt,
@@ -582,7 +583,6 @@ class Inference:
 								guidance_scale=cfg.guidance_scale,
 								strength=cfg.strength,
 								noise=noise,
-								# negative_prompt=NEGATIVE_PROMPT,
 							).images[0]
 
 						# Join all the images together side by side
