@@ -42,8 +42,8 @@ for image_path in image_paths:
 			
 			train_cfg = TrainConfig(
 				experiment_name=f'{image_path.stem}_n_noises_{n_noises}_n_prompts_{n_prompts}',
-				source_image_path=image_path,
-				target_image_path=image_path,
+				source_image_paths=[image_path],
+				target_image_paths=[image_path],
 				default_source_image_caption="",
 				output_path=image_output_path,
 				n_optimization_steps=150,
@@ -58,7 +58,7 @@ for image_path in image_paths:
 				use_sdxl=False,
 				use_lcm=True
 			)
-			adversarial_image = trainer.run()
+			adversarial_image, perturbation = trainer.run()
 			adversarial_image.save(experiment_output_root / "adversarial_image.png")
 			torch.save(trainer.noises, experiment_output_root / "noise.pt")
 			
@@ -68,8 +68,8 @@ for image_path in image_paths:
 			# Part 2: Inference
 			inference_cfg = InferenceConfig(
 				experiment_name=f'{image_path.stem}_n_noises_{n_noises}_n_prompts_{n_prompts}',
-				source_image_path=image_path,
-				target_image_path=image_path,
+				source_image_paths=[image_path],
+				target_image_paths=[image_path],
 				output_path=experiment_output_root,
 				n_steps=4,
 				guidance_scale=4.0,
@@ -84,7 +84,7 @@ for image_path in image_paths:
 				
 			Inference.run_inference(
 				cfg=inference_cfg,
-				adversarial_image=adversarial_image,
+				perturbation=perturbation,
 				inference_prompts=INFERENCE_PROMPTS,
 				use_sdxl=False,
 				use_lcm=True,

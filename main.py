@@ -95,6 +95,7 @@ class Trainer:
 			output_image = None
 			prompt = self.cfg.prompts[np.random.randint(0, len(self.cfg.prompts))]
 			prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
+			prompt = f"{prompt}, detailed"
 			for i in range(self.cfg.grad_reps):
 				# Randomly sample one of the prompts in the set
 				c_grad, loss, output_image, loss_dict = self.compute_grad(
@@ -153,19 +154,17 @@ class Trainer:
 		
 		# Let's also log the perturbation
 		perturbation = perturbation.detach().cpu()
-		perturbation = (perturbation / 2 + 0.5).clamp(0, 1)
-		perturbation_image = T.ToPILImage()(perturbation[0]).convert("RGB")
+		perturbation_image = T.ToPILImage()((perturbation / 2 + 0.5).clamp(0, 1)[0]).convert("RGB")
 		wandb.log({"perturbation": wandb.Image(perturbation_image)})
-		
 		return adversarial_image, perturbation
 	
 	def compute_grad(self,
-	                 cur_image: torch.Tensor,
-	                 prompt: str,
-	                 source_image: torch.Tensor,
-	                 target_image: torch.Tensor,
-	                 target_latent: torch.Tensor,
-	                 noise: Optional[List[torch.Tensor]] = None) -> Tuple[
+					 cur_image: torch.Tensor,
+					 prompt: str,
+					 source_image: torch.Tensor,
+					 target_image: torch.Tensor,
+					 target_latent: torch.Tensor,
+					 noise: Optional[List[torch.Tensor]] = None) -> Tuple[
 		torch.Tensor, torch.Tensor, torch.Tensor, dict]:
 		torch.set_grad_enabled(True)
 		
@@ -197,9 +196,9 @@ class Trainer:
 		return grad, loss.item(), output_image, loss_dict
 	
 	def attack_forward(self,
-	                   prompt: Union[str, List[str]],
-	                   image: Union[torch.Tensor, Image.Image],
-	                   noise: Optional[List[torch.Tensor]] = None) -> torch.Tensor:
+					   prompt: Union[str, List[str]],
+					   image: Union[torch.Tensor, Image.Image],
+					   noise: Optional[List[torch.Tensor]] = None) -> torch.Tensor:
 		
 		# Encode the prompt
 		embeds = self._encode_prompt(prompt)
@@ -260,16 +259,16 @@ class Trainer:
 			noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
 			noise_pred = noise_pred_uncond + self.cfg.guidance_scale * (noise_pred_text - noise_pred_uncond)
 			latents = self.pipeline.scheduler.step(noise_pred, t, latents, **extra_step_kwargs,
-			                                       return_dict=True).prev_sample
+												   return_dict=True).prev_sample
 		
 		latents = 1 / 0.18215 * latents
 		return latents
 	
 	def perturbation_step(self,
-	                      X_adv: torch.Tensor,
-	                      grad: torch.Tensor,
-	                      X: torch.Tensor,
-	                      X_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+						  X_adv: torch.Tensor,
+						  grad: torch.Tensor,
+						  X: torch.Tensor,
+						  X_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""Apply the perturbation step for either L2 or Linf norm."""
 		if self.cfg.norm_type == 'l2':
 			# Normalize gradient for L2 norm
@@ -300,9 +299,9 @@ class Trainer:
 	
 	@staticmethod
 	def load_models(use_sdxl: bool = True,
-	                use_lcm: bool = False,
-	                device: str = "cuda",
-	                dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
+					use_lcm: bool = False,
+					device: str = "cuda",
+					dtype: torch.dtype = torch.float16) -> AutoPipelineForImage2Image:
 		if use_sdxl:
 			pipeline = AutoPipelineForImage2Image.from_pretrained(
 				"stabilityai/stable-diffusion-xl-base-1.0",
@@ -328,7 +327,7 @@ class Trainer:
 			if use_lcm:
 				pipeline.scheduler = LCMScheduler.from_config(pipeline.scheduler.config)
 				pipeline.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
-				pipeline.fuse_lora(lora_scale=0.7)
+				pipeline.fuse_lora()
 		return pipeline
 	
 	def _encode_prompt(self, prompt: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -343,7 +342,7 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				negative_prompt=NEGATIVE_PROMPT,
+				# negative_prompt=NEGATIVE_PROMPT,
 			)
 		else:
 			(
@@ -354,15 +353,15 @@ class Trainer:
 				device=self.pipeline.device,
 				num_images_per_prompt=1,
 				do_classifier_free_guidance=True,
-				negative_prompt=NEGATIVE_PROMPT,
+				# negative_prompt=NEGATIVE_PROMPT,
 			)
 			negative_pooled_prompt_embeds, pooled_prompt_embeds = None, None
 		return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 	
 	def get_sdxl_additional_inputs(self,
-	                               prompt_embeds: torch.Tensor,
-	                               pooled_prompt_embeds: torch.Tensor,
-	                               negative_pooled_prompt_embeds: torch.Tensor) -> dict:
+								   prompt_embeds: torch.Tensor,
+								   pooled_prompt_embeds: torch.Tensor,
+								   negative_pooled_prompt_embeds: torch.Tensor) -> dict:
 		add_text_embeds = pooled_prompt_embeds
 		text_encoder_projection_dim = self.pipeline.text_encoder_2.config.projection_dim
 		add_time_ids = self._get_add_time_ids(
@@ -388,11 +387,11 @@ class Trainer:
 	
 	@staticmethod
 	def _get_add_time_ids(unet,
-	                      original_size: Tuple[int, int] = (512, 512),
-	                      crops_coords_top_left: Tuple[int, int] = (0, 0),
-	                      target_size: Tuple[int, int] = (512, 512),
-	                      dtype: torch.dtype = torch.float16,
-	                      text_encoder_projection_dim: int = 1280) -> torch.Tensor:
+						  original_size: Tuple[int, int] = (512, 512),
+						  crops_coords_top_left: Tuple[int, int] = (0, 0),
+						  target_size: Tuple[int, int] = (512, 512),
+						  dtype: torch.dtype = torch.float16,
+						  text_encoder_projection_dim: int = 1280) -> torch.Tensor:
 		add_time_ids = list(original_size + crops_coords_top_left + target_size)
 		passed_add_embed_dim = (
 				unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
@@ -430,99 +429,109 @@ class Inference:
 	
 	@staticmethod
 	def run_inference(cfg: InferenceConfig,
-	                  perturbation: Optional[torch.Tensor],
-	                  inference_prompts: List[str],
-	                  use_sdxl: bool = True,
-	                  use_lcm: bool = False,
-	                  noises: Optional[List[torch.Tensor]] = None,
-	                  training_prompts: Optional[List[str]] = None) -> List[Image.Image]:
+					  perturbation: torch.Tensor,
+					  inference_prompts: List[str],
+					  use_sdxl: bool = True,
+					  use_lcm: bool = False,
+					  noises: Optional[List[torch.Tensor]] = None) -> List[Image.Image]:
 		""" Main inference loop """
 		wandb.init(
 			project="TML Project",
 			config=dataclasses.asdict(cfg),
 			name=cfg.experiment_name,
 		)
+		torch.manual_seed(cfg.seed)
 		
 		pipeline = Trainer.load_models(use_sdxl=use_sdxl, use_lcm=use_lcm, dtype=torch.float32)
-		transforms = T.Compose([
+		resize_transforms = T.Compose([
 			T.Resize(512, interpolation=T.InterpolationMode.BILINEAR),
 			T.CenterCrop(512),
 		])
-		source_images = [
-			transforms(Image.open(path).convert("RGB")) for path in cfg.source_image_paths
+		transforms = T.Compose([
+			T.Resize(512, interpolation=T.InterpolationMode.BILINEAR),
+			T.CenterCrop(512),
+			T.ToTensor(),
+			T.Normalize([0.5], [0.5]),
+		])
+		source_images = [resize_transforms(Image.open(path).convert("RGB")) for path in cfg.source_image_paths]
+		target_images = [resize_transforms(Image.open(path).convert("RGB")) for path in cfg.target_image_paths]
+		source_tensors = [transforms(image) for image in source_images]
+
+		# Define the adversarial image by adding the perturbation to the source image
+		adversarial_images = [
+			(((image + perturbation[0]).numpy() + 1) * 127.5).astype(np.uint8).transpose(1, 2, 0)
+			for image in source_tensors
 		]
-		target_images = [
-			transforms(Image.open(path).convert("RGB")) for path in cfg.target_image_paths
-		]
-		
-		torch.manual_seed(cfg.seed)
-		
-		source_image_caption = ''
+		adversarial_images = [Image.fromarray(np.clip(image, 0, 255).astype(np.uint8)) for image in adversarial_images]
+
+		source_image_captions = [''] * len(source_images)
 		if cfg.default_source_image_caption != "" or cfg.add_image_caption_to_prompts:
 			if cfg.default_source_image_caption != "":
-				source_image_caption = cfg.default_source_image_caption
+				source_image_captions = [cfg.default_source_image_caption] * len(source_images)
 			else:
-				source_image_caption = Trainer._get_image_caption(cfg.source_image, dtype=torch.float32)
-			print(f"Running with prefix: {source_image_caption}")
+				source_image_captions = [
+					ImagePromptDataset._get_image_caption(image, dtype=torch.float32) for image in source_images
+				]
 		
 		output_images = []
 		
 		# Concat inference prompts and training prompts with a tuple that has a prefix of type
-		# all_prompts = ([(prompt, "Training") for prompt in training_prompts] +
-		#                [(prompt, "Validation") for prompt in inference_prompts])
 		all_prompts = [(prompt, "Validation") for prompt in inference_prompts]
+
+		for source_image, target_image, adversarial_image, prefix in zip(source_images, target_images, adversarial_images, source_image_captions):
 		
-		# for prompt, prompt_type in all_prompts:
-		for prompt, prompt_type in []:
-			
-			# If noises are not given, get n_noise random noise tensors for each prompt
-			noises_for_prompt = noises
-			if noises is None:
-				noises_for_prompt = [
-					randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(cfg.n_noise)
-				]
-			
-			for noise_idx, noise in enumerate(noises_for_prompt):
-				prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
-				with torch.no_grad():
-					output_clean = pipeline.__call__(
-						prompt=prompt,
-						image=source_image,
-						num_inference_steps=cfg.n_steps,
-						guidance_scale=cfg.guidance_scale,
-						strength=cfg.strength,
-						negative_prompt=NEGATIVE_PROMPT,
-					).images[0]
-					output_adversarial = pipeline.__call__(
-						prompt=prompt,
-						image=adversarial_image,
-						num_inference_steps=cfg.n_steps,
-						guidance_scale=cfg.guidance_scale,
-						strength=cfg.strength,
-						noise=noise,
-						negative_prompt=NEGATIVE_PROMPT,
-					).images[0]
+			# for prompt, prompt_type in all_prompts:
+			for prompt, prompt_type in all_prompts:
 				
-				# Join all the images together side by side
-				images = [
-					source_image.resize((512, 512)),
-					target_image.resize((512, 512)),
-					adversarial_image.resize((512, 512)),
-					output_clean.resize((512, 512)),
-					output_adversarial.resize((512, 512))
-				]
-				labels = [
-					'Source Image',
-					'Target Image',
-					'Adversarial Image',
-					f'Edit on Original ({prompt})',
-					f'Edit on Adversarial ({prompt})'
-				]
-				joined_image = create_table_plot(images=images, captions=labels)
-				save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
-				joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
-				wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
-				output_images.append(joined_image)
+				# If noises are not given, get n_noise random noise tensors for each prompt
+				noises_for_prompt = noises
+				if noises is None:
+					noises_for_prompt = [
+						randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32) for _ in range(cfg.n_noise)
+					]
+				
+				for noise_idx, noise in enumerate(noises_for_prompt):
+					prompt = f"{prefix} {prompt}" if prefix != "" else prompt
+					prompt = f"{prompt}, detailed"
+					with torch.no_grad():
+						output_clean = pipeline.__call__(
+							prompt=prompt,
+							image=source_image,
+							num_inference_steps=cfg.n_steps,
+							guidance_scale=cfg.guidance_scale,
+							strength=cfg.strength,
+							# negative_prompt=NEGATIVE_PROMPT,
+						).images[0]
+						output_adversarial = pipeline.__call__(
+							prompt=prompt,
+							image=adversarial_image,
+							num_inference_steps=cfg.n_steps,
+							guidance_scale=cfg.guidance_scale,
+							strength=cfg.strength,
+							noise=noise,
+							# negative_prompt=NEGATIVE_PROMPT,
+						).images[0]
+	
+					# Join all the images together side by side
+					images = [
+						source_image.resize((512, 512)),
+						target_image.resize((512, 512)),
+						adversarial_image.resize((512, 512)),
+						output_clean.resize((512, 512)),
+						output_adversarial.resize((512, 512))
+					]
+					labels = [
+						'Source Image',
+						'Target Image',
+						'Adversarial Image',
+						f'Edit on Original ({prompt})',
+						f'Edit on Adversarial ({prompt})'
+					]
+					joined_image = create_table_plot(images=images, captions=labels)
+					save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
+					joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
+					wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
+					output_images.append(joined_image)
 		
 		if cfg.validation_images_path is not None:
 			
@@ -534,13 +543,17 @@ class Inference:
 			for val_image_path in validation_images_paths:
 				
 				val_image = transforms(Image.open(val_image_path).convert("RGB"))
-				# val_image_adversarial = np.array(val_image) + perturbation
-				# Clip values and convert back
-				# val_image_adversarial = Image.fromarray(np.clip(val_image_adversarial, 0, 255).astype(np.uint8))
-				val_image_adversarial = Inference.transfer_perturbation(perturbation,
-				                                                        original_image=np.array(source_image),
-				                                                        new_image=np.array(val_image))
+				# For the original image, take the average image of those seen during training
+				avg_image = torch.stack(source_tensors).mean(0)
+				avg_image = Image.fromarray(((avg_image.permute(1, 2, 0).numpy() + 1) * 127.5).astype('uint8'))
+				val_image_adversarial = Inference.transfer_perturbation(
+					perturbation,
+					original_image=np.array(avg_image),
+					new_image=np.array(val_image)
+				)
 				val_image_adversarial = Image.fromarray(val_image_adversarial.astype(np.uint8))
+				
+				source_image_caption = ""  # Don't use prefix for this test
 				
 				for prompt, prompt_type in all_prompts:
 					
@@ -548,10 +561,11 @@ class Inference:
 					noises_for_prompt = noises
 					if noises is None:
 						noises_for_prompt = [randn_tensor((1, 4, 64, 64), device='cuda', dtype=torch.float32)
-						                     for _ in range(cfg.n_noise)]
+											 for _ in range(cfg.n_noise)]
 					
 					for noise_idx, noise in enumerate(noises_for_prompt):
 						prompt = f"{source_image_caption} {prompt}" if source_image_caption != "" else prompt
+						prompt = f"{prompt}, detailed"
 						with torch.no_grad():
 							val_output_clean = pipeline.__call__(
 								prompt=prompt,
@@ -559,7 +573,7 @@ class Inference:
 								num_inference_steps=cfg.n_steps,
 								guidance_scale=cfg.guidance_scale,
 								strength=cfg.strength,
-								negative_prompt=NEGATIVE_PROMPT,
+								# negative_prompt=NEGATIVE_PROMPT,
 							).images[0]
 							val_output_adversarial = pipeline.__call__(
 								prompt=prompt,
@@ -568,9 +582,9 @@ class Inference:
 								guidance_scale=cfg.guidance_scale,
 								strength=cfg.strength,
 								noise=noise,
-								negative_prompt=NEGATIVE_PROMPT,
+								# negative_prompt=NEGATIVE_PROMPT,
 							).images[0]
-						
+
 						# Join all the images together side by side
 						images = [
 							val_image.resize((512, 512)),
@@ -590,20 +604,21 @@ class Inference:
 						wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
 		
 		return output_images
-
-
-if __name__ == '__main__':
+	
+	
+def main():
 	use_sdxl = False
-	use_lcm = True
+	use_lcm_training = True
+	use_lcm_inference = True
 	
 	# Source image path
 	source_image_paths = [
 		Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
-		# Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
+		Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
 	]
 	target_image_paths = [
 		Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
-		# Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
+		Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
 	]
 	output_path = Path("/data/yuval/")
 	
@@ -612,22 +627,21 @@ if __name__ == '__main__':
 		source_image_paths=source_image_paths,
 		target_image_paths=target_image_paths,
 		output_path=output_path,
-		n_optimization_steps=250,
+		n_optimization_steps=100,
 		guidance_scale=4.0,
-		n_noise=2,
+		n_noise=1,
 		use_fixed_noise=True,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
 		use_sdxl=use_sdxl,
-		use_lcm=use_lcm
+		use_lcm=use_lcm_training
 	)
 	# adversarial_image, perturbation = trainer.run()
 	# adversarial_image.save(output_path / "adversarial_image.png")
 	# torch.save(trainer.noises, output_path / "noise.pt")
 	# torch.save(perturbation, output_path / "perturbation.pt")
 	
-	adversarial_image = Image.open(output_path / "adversarial_image.png").convert("RGB")
 	trainer.noises = torch.load(output_path / "noise.pt")
 	perturbation = torch.load(output_path / "perturbation.pt")
 	
@@ -637,12 +651,13 @@ if __name__ == '__main__':
 		source_image_paths=source_image_paths,
 		target_image_paths=target_image_paths,
 		output_path=output_path,
-		n_steps=4 if use_lcm else 50,
+		n_steps=4 if use_lcm_inference else 50,
 		guidance_scale=4.0,
-		strength=0.95,
+		strength=0.60,
 		use_fixed_noise=True,
 		n_noise=train_cfg.n_noise,
-		# validation_images_path=None,
+		validation_images_path=Path("validation_images.txt"),
+		default_source_image_caption="",
 	)
 	
 	inference_noises = None
@@ -651,11 +666,13 @@ if __name__ == '__main__':
 	
 	Inference.run_inference(
 		cfg=inference_cfg,
-		adversarial_image=adversarial_image,
+		perturbation=perturbation,
 		inference_prompts=INFERENCE_PROMPTS,
-		use_sdxl=use_sdxl,
-		use_lcm=use_lcm,
+		use_sdxl=False,
+		use_lcm=use_lcm_inference,
 		noises=inference_noises,
-		training_prompts=train_cfg.prompts,
-		perturbation=perturbation
 	)
+
+
+if __name__ == '__main__':
+	main()
