@@ -1,6 +1,7 @@
 import dataclasses
 import inspect
 import os
+import random
 from pathlib import Path
 from typing import List, Tuple, Union, Optional
 
@@ -398,18 +399,11 @@ class Inference:
 	
 	@staticmethod
 	def transfer_perturbation(original_perturbation, original_image, new_image, max_perturbation_value: int = 20):
-		# Calculate scaling factor based on standard deviation
 		std_ratio = np.std(new_image) / np.std(original_image)
-		# Cap the scaling factor to prevent amplification
 		scale_factor = min(1, std_ratio)
-		# Scale the perturbation
 		scaled_perturbation = original_perturbation * scale_factor
-		# Normalize the perturbation to have a maximum absolute value
 		scaled_perturbation = np.clip(scaled_perturbation, -max_perturbation_value, max_perturbation_value)
-		# Apply the scaled perturbation to the new image
-		# perturbed_image = new_image + scaled_perturbation
-		perturbed_image = new_image - scaled_perturbation
-		# Clip pixel values to valid range
+		perturbed_image = new_image + scaled_perturbation
 		perturbed_image = np.clip(perturbed_image, 0, 255)
 		return perturbed_image.astype(np.uint8)
 	
@@ -464,11 +458,10 @@ class Inference:
 		# Concat inference prompts and training prompts with a tuple that has a prefix of type
 		all_prompts = [(prompt, "Validation") for prompt in inference_prompts]
 		
-		for source_image, target_image, adversarial_image, prefix in zip(source_images, target_images,
-		                                                                 adversarial_images, source_image_captions):
+		inputs = zip(source_images, target_images, adversarial_images, source_image_captions)
+		for source_image, target_image, adversarial_image, prefix in inputs:
 			
-			# for prompt, prompt_type in all_prompts:
-			for prompt, prompt_type in []:
+			for prompt, prompt_type in all_prompts:
 				
 				# If noises are not given, get n_noise random noise tensors for each prompt
 				noises_for_prompt = noises
@@ -481,43 +474,50 @@ class Inference:
 				for noise_idx, noise in enumerate(noises_for_prompt):
 					prompt = f"{prefix} {prompt}" if prefix != "" else prompt
 					prompt = f"{prompt}, detailed"
-					with torch.no_grad():
-						output_clean = pipeline.__call__(
-							prompt=prompt,
-							image=source_image,
-							num_inference_steps=cfg.n_steps,
-							guidance_scale=cfg.guidance_scale,
-							strength=cfg.strength,
-						).images[0]
-						output_adversarial = pipeline.__call__(
-							prompt=prompt,
-							image=adversarial_image,
-							num_inference_steps=cfg.n_steps,
-							guidance_scale=cfg.guidance_scale,
-							strength=cfg.strength,
-							noise=noise,
-						).images[0]
 					
-					# Join all the images together side by side
-					images = [
-						source_image.resize((512, 512)),
-						target_image.resize((512, 512)),
-						adversarial_image.resize((512, 512)),
-						output_clean.resize((512, 512)),
-						output_adversarial.resize((512, 512))
-					]
-					labels = [
-						'Source Image',
-						'Target Image',
-						'Adversarial Image',
-						f'Edit on Original ({prompt})',
-						f'Edit on Adversarial ({prompt})'
-					]
-					joined_image = create_table_plot(images=images, captions=labels)
-					save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
-					joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
-					wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
-					output_images.append(joined_image)
+					# Randomly sample 5 seeds
+					seeds = [random.randint(0, 2 ** 32 - 1) for _ in range(5)]
+					for seed in seeds:
+					
+						with torch.no_grad():
+							output_clean = pipeline.__call__(
+								prompt=prompt,
+								image=source_image,
+								num_inference_steps=cfg.n_steps,
+								guidance_scale=cfg.guidance_scale,
+								strength=cfg.strength,
+								generator=torch.Generator().manual_seed(seed)
+							).images[0]
+							output_adversarial = pipeline.__call__(
+								prompt=prompt,
+								image=adversarial_image,
+								num_inference_steps=cfg.n_steps,
+								guidance_scale=cfg.guidance_scale,
+								strength=cfg.strength,
+								noise=noise,
+								generator=torch.Generator().manual_seed(seed)
+							).images[0]
+						
+						# Join all the images together side by side
+						images = [
+							source_image.resize((512, 512)),
+							target_image.resize((512, 512)),
+							adversarial_image.resize((512, 512)),
+							output_clean.resize((512, 512)),
+							output_adversarial.resize((512, 512))
+						]
+						labels = [
+							'Source Image',
+							'Target Image',
+							'Adversarial Image',
+							f'Edit on Original ({prompt})',
+							f'Edit on Adversarial ({prompt})'
+						]
+						joined_image = create_table_plot(images=images, captions=labels)
+						save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
+						joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}_seed_{seed}.png")
+						# wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
+						# output_images.append(joined_image)
 		
 		if cfg.validation_images_path is not None:
 			
@@ -591,7 +591,7 @@ class Inference:
 						joined_image = create_table_plot(images=images, captions=labels)
 						save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 						joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
-						wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
+						# wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
 		
 		return output_images
 

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pyrallis
 import torch
-from PIL import Image
 from tqdm import tqdm
 
 from configs import TrainConfig, PROMPTS_LIST, InferenceConfig, INFERENCE_PROMPTS
@@ -83,9 +82,10 @@ def main(cfg: Config):
 				adversarial_image, perturbation = trainer.run()
 				adversarial_image.save(experiment_output_root / "adversarial_image.png")
 				torch.save(trainer.noises, experiment_output_root / "noise.pt")
+				torch.save(perturbation, experiment_output_root / "perturbation.pt")
 				
-				adversarial_image = Image.open(experiment_output_root / "adversarial_image.png").convert("RGB")
 				trainer.noises = torch.load(experiment_output_root / "noise.pt")
+				perturbation = torch.load(experiment_output_root / "perturbation.pt")
 				
 				# Part 2: Inference
 				inference_cfg = InferenceConfig(
@@ -99,7 +99,8 @@ def main(cfg: Config):
 					use_fixed_noise=True if n_noises is not None else False,
 					n_noise=len(trainer.noises) if n_noises is not None else 1,
 					add_image_caption_to_prompts=False,
-					default_source_image_caption=""
+					default_source_image_caption="",
+					validation_images_path=None,
 				)
 				
 				inference_noises = None
