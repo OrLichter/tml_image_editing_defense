@@ -473,7 +473,6 @@ class Inference:
 				
 				for noise_idx, noise in enumerate(noises_for_prompt):
 					prompt = f"{prefix} {prompt}" if prefix != "" else prompt
-					prompt = f"{prompt}, detailed"
 					
 					# Randomly sample 5 seeds
 					seeds = [random.randint(0, 2 ** 32 - 1) for _ in range(5)]
@@ -481,7 +480,7 @@ class Inference:
 					
 						with torch.no_grad():
 							output_clean = pipeline.__call__(
-								prompt=prompt,
+								prompt=f"{prompt}, detailed",
 								image=source_image,
 								num_inference_steps=cfg.n_steps,
 								guidance_scale=cfg.guidance_scale,
@@ -489,7 +488,7 @@ class Inference:
 								generator=torch.Generator().manual_seed(seed)
 							).images[0]
 							output_adversarial = pipeline.__call__(
-								prompt=prompt,
+								prompt=f"{prompt}, detailed",
 								image=adversarial_image,
 								num_inference_steps=cfg.n_steps,
 								guidance_scale=cfg.guidance_scale,
@@ -599,38 +598,46 @@ class Inference:
 def example():
 	use_sdxl = False
 	use_lcm_training = True
-	use_lcm_inference = True
+	use_lcm_inference = False
 	
 	# Source image path
 	source_image_paths = [
-		Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
-		Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
+		# Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
+		# Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
+		# Path('./images/pexels-mike-van-schoonderwalt-1884800-5484510.jpg')
+		# Path('./images/pexels-ana-sofia-bustamante-3271144-7443146.jpg')
+		Path('./images/pexels-nout-gons-80280-378570.jpg')
 	]
 	target_image_paths = [
-		Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
-		Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
+		# Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
+		# Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
+		# Path('./images/pexels-mike-van-schoonderwalt-1884800-5484510.jpg')
+		# Path('./images/pexels-ana-sofia-bustamante-3271144-7443146.jpg')
+		Path('./images/pexels-nout-gons-80280-378570.jpg')
 	]
-	output_path = Path("/data/yuval/")
+	output_path = Path("/data/yuval/tml_experiments/final_experiments/"
+	                   "pexels-nout-gons-80280-378570/n_noises_1/n_prompts_None/")
+	inference_prompts = ['in a snowstorm']
 	
 	# Part 1: Training
 	train_cfg = TrainConfig(
 		source_image_paths=source_image_paths,
 		target_image_paths=target_image_paths,
 		output_path=output_path,
-		n_optimization_steps=150,
+		n_optimization_steps=200,
 		guidance_scale=4.0,
 		n_noise=1,
-		use_fixed_noise=False,
+		use_fixed_noise=True,
 	)
 	trainer = Trainer(
 		cfg=train_cfg,
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm_training
 	)
-	adversarial_image, perturbation = trainer.run()
-	adversarial_image.save(output_path / "adversarial_image.png")
-	torch.save(trainer.noises, output_path / "noise.pt")
-	torch.save(perturbation, output_path / "perturbation.pt")
+	# adversarial_image, perturbation = trainer.run()
+	# adversarial_image.save(output_path / "adversarial_image.png")
+	# torch.save(trainer.noises, output_path / "noise.pt")
+	# torch.save(perturbation, output_path / "perturbation.pt")
 	
 	trainer.noises = torch.load(output_path / "noise.pt")
 	perturbation = torch.load(output_path / "perturbation.pt")
@@ -640,13 +647,13 @@ def example():
 		experiment_name='use_train_noises',
 		source_image_paths=source_image_paths,
 		target_image_paths=target_image_paths,
-		output_path=output_path,
+		output_path=Path('/data/yuval/generalize_to_sd'),
 		n_steps=4 if use_lcm_inference else 50,
 		guidance_scale=4.0,
 		strength=0.60,
 		use_fixed_noise=train_cfg.use_fixed_noise,
 		n_noise=train_cfg.n_noise,
-		validation_images_path=Path("validation_images.txt"),
+		validation_images_path=Path("evaluation/validation_images.txt"),
 		default_source_image_caption="",
 	)
 	
@@ -657,7 +664,7 @@ def example():
 	Inference.run_inference(
 		cfg=inference_cfg,
 		perturbation=perturbation,
-		inference_prompts=INFERENCE_PROMPTS,
+		inference_prompts=inference_prompts,
 		use_sdxl=False,
 		use_lcm=use_lcm_inference,
 		noises=inference_noises,

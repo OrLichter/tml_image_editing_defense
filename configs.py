@@ -186,7 +186,7 @@ class InferenceConfig:
 	# How many noises to use for inference if not running with fixed noise
 	n_noise: int = 1
 	# Validation images (not seen during training)
-	validation_images_path: Optional[Path] = Path("validation_images.txt")
+	validation_images_path: Optional[Path] = Path("evaluation/validation_images.txt")
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)

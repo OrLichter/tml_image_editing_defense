@@ -13,7 +13,7 @@ from main import Trainer, Inference
 @dataclass
 class Config:
 	part: int
-	n_optimization_steps: int = 10
+	n_optimization_steps: int = 200
 
 
 @pyrallis.wrap()
