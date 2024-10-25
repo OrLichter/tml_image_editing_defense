@@ -187,6 +187,8 @@ class InferenceConfig:
 	n_noise: int = 1
 	# Validation images (not seen during training)
 	validation_images_path: Optional[Path] = Path("evaluation/validation_images.txt")
+	# Validation images (not seen during training)
+	validation_images_paths: Optional[List[Path]] = None
 	
 	def __post_init__(self):
 		self.output_path.mkdir(exist_ok=True, parents=True)

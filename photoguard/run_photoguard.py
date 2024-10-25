@@ -162,7 +162,7 @@ pipe_inpaint = StableDiffusionInpaintPipeline.from_pretrained(
 )
 pipe_inpaint = pipe_inpaint.to("cuda")
 
-output_root = Path('/data/yuval/tml_experiments/photoguard_results')
+output_root = Path('./photoguard_results')
 output_root.mkdir(exist_ok=True, parents=True)
 
 image_paths = [p for p in Path('./images').glob("*") if p.suffix in ['.jpg', '.png', '.jpeg']]

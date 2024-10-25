@@ -5,10 +5,10 @@ from tqdm import tqdm
 
 from evaluation.clip_eval import ImageDirEvaluator
 
-data_root = Path('/data/yuval/code/tau/tml_final_project/images/')
+data_root = Path('./images/')
 
-root = Path('/data/yuval/tml_experiments/photoguard_results/')
-# root = Path('/data/yuval/tml_experiments/photoguard_results_img2img/')
+root = Path('./photoguard_results/')
+# root = Path('./photoguard_results_img2img/')
 
 evaluator = ImageDirEvaluator(device='cuda', clip_model='ViT-B/32')
 
@@ -33,10 +33,7 @@ for image_root in tqdm(root.iterdir()):
 		if not prompt_root.is_dir():
 			continue
 			
-		if 'detailed' in prompt_root.name:
-			continue
-		
-		print(prompt_root)
+		images = [p.name for p in prompt_root.iterdir()]
 		
 		prompt = prompt_root.stem
 		natural_image = Image.open(prompt_root / 'natural_v2.png').convert('RGB')
@@ -58,8 +55,8 @@ for image_root in tqdm(root.iterdir()):
 # Compute the averages across all prompts
 natural_image_similarities_avg = {k: sum(v.values()) / len(v) for k, v in natural_image_similarities.items()}
 natural_text_similarities_avg = {k: sum(v.values()) / len(v) for k, v in natural_text_similarities.items()}
-adversarial_image_similarities_avg = {k: sum(v.values()) / len(v) for k, v in image_similarities.items()}
-adversarial_text_similarities_avg = {k: sum(v.values()) / len(v) for k, v in text_similarities.items()}
+adversarial_image_similarities_avg = {k: sum(v.values()) / len(v) for k, v in image_similarities.items() if len(v) > 0}
+adversarial_text_similarities_avg = {k: sum(v.values()) / len(v) for k, v in text_similarities.items() if len(v) > 0}
 
 # Compute the average across all images
 natural_image_similarities_avg = sum(natural_image_similarities_avg.values()) / len(natural_image_similarities_avg)

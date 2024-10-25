@@ -515,15 +515,18 @@ class Inference:
 						joined_image = create_table_plot(images=images, captions=labels)
 						save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
 						joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}_seed_{seed}.png")
-						# wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
-						# output_images.append(joined_image)
+						wandb.log({f"Train Images - {prompt_type} Prompts": wandb.Image(joined_image, caption=prompt)})
+						output_images.append(joined_image)
 		
-		if cfg.validation_images_path is not None:
+		if cfg.validation_images_path is not None or cfg.validation_images_paths is not None:
 			
 			# Read paths to validation images
-			with open(cfg.validation_images_path, "r") as f:
-				validation_images_paths = f.readlines()
-				validation_images_paths = [Path(img.strip()) for img in validation_images_paths]
+			if cfg.validation_images_paths is not None:
+				validation_images_paths = cfg.validation_images_paths
+			else:
+				with open(cfg.validation_images_path, "r") as f:
+					validation_images_paths = f.readlines()
+					validation_images_paths = [Path(img.strip()) for img in validation_images_paths]
 			
 			for val_image_path in validation_images_paths:
 				
@@ -543,6 +546,8 @@ class Inference:
 				val_image_adversarial = Image.fromarray(val_image_adversarial).convert("RGB")
 				
 				source_image_caption = ""  # Don't use prefix for this test
+				image_save_path = cfg.output_path / val_image_path.stem
+				image_save_path.mkdir(exist_ok=True, parents=True)
 				
 				for prompt, prompt_type in all_prompts:
 					
@@ -589,8 +594,8 @@ class Inference:
 						]
 						joined_image = create_table_plot(images=images, captions=labels)
 						save_name = "-".join(prompt[:30].split()) if len(prompt) > 0 else 'empty_prompt'
-						joined_image.save(cfg.output_path / f"{save_name}_noise_{noise_idx}.png")
-						# wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
+						joined_image.save(image_save_path / f"val_image_{save_name}_noise_{noise_idx}.png")
+						wandb.log({f"Val Images - {prompt_type} Prompt": wandb.Image(joined_image, caption=prompt)})
 		
 		return output_images
 
@@ -602,22 +607,12 @@ def example():
 	
 	# Source image path
 	source_image_paths = [
-		# Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
-		# Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
-		# Path('./images/pexels-mike-van-schoonderwalt-1884800-5484510.jpg')
-		# Path('./images/pexels-ana-sofia-bustamante-3271144-7443146.jpg')
 		Path('./images/pexels-nout-gons-80280-378570.jpg')
 	]
 	target_image_paths = [
-		# Path("./images/pexels-burcin-altinyay-1182404935-28191722.jpg"),
-		# Path("./images/pexels-lorna-pauli-1320744316-28992825.jpg"),
-		# Path('./images/pexels-mike-van-schoonderwalt-1884800-5484510.jpg')
-		# Path('./images/pexels-ana-sofia-bustamante-3271144-7443146.jpg')
 		Path('./images/pexels-nout-gons-80280-378570.jpg')
 	]
-	output_path = Path("/data/yuval/tml_experiments/final_experiments/"
-	                   "pexels-nout-gons-80280-378570/n_noises_1/n_prompts_None/")
-	inference_prompts = ['in a snowstorm']
+	output_path = Path("./final_experiments/")
 	
 	# Part 1: Training
 	train_cfg = TrainConfig(
@@ -634,10 +629,10 @@ def example():
 		use_sdxl=use_sdxl,
 		use_lcm=use_lcm_training
 	)
-	# adversarial_image, perturbation = trainer.run()
-	# adversarial_image.save(output_path / "adversarial_image.png")
-	# torch.save(trainer.noises, output_path / "noise.pt")
-	# torch.save(perturbation, output_path / "perturbation.pt")
+	adversarial_image, perturbation = trainer.run()
+	adversarial_image.save(output_path / "adversarial_image.png")
+	torch.save(trainer.noises, output_path / "noise.pt")
+	torch.save(perturbation, output_path / "perturbation.pt")
 	
 	trainer.noises = torch.load(output_path / "noise.pt")
 	perturbation = torch.load(output_path / "perturbation.pt")
@@ -647,7 +642,7 @@ def example():
 		experiment_name='use_train_noises',
 		source_image_paths=source_image_paths,
 		target_image_paths=target_image_paths,
-		output_path=Path('/data/yuval/generalize_to_sd'),
+		output_path=output_path,
 		n_steps=4 if use_lcm_inference else 50,
 		guidance_scale=4.0,
 		strength=0.60,
@@ -664,7 +659,7 @@ def example():
 	Inference.run_inference(
 		cfg=inference_cfg,
 		perturbation=perturbation,
-		inference_prompts=inference_prompts,
+		inference_prompts=INFERENCE_PROMPTS,
 		use_sdxl=False,
 		use_lcm=use_lcm_inference,
 		noises=inference_noises,

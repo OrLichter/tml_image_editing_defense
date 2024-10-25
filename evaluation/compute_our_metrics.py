@@ -7,9 +7,9 @@ from tqdm import tqdm
 
 from evaluation.clip_eval import ImageDirEvaluator
 
-data_root = Path('/data/yuval/code/tau/tml_final_project/images/')
+data_root = Path('./images/')
 
-root = Path('/data/yuval/tml_experiments/final_experiments/')
+root = Path('./final_experiments/')
 
 evaluator = ImageDirEvaluator(device='cuda', clip_model='ViT-B/32')
 

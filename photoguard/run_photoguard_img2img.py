@@ -135,7 +135,7 @@ pipeline = AutoPipelineForImage2Image.from_pretrained(
 # pipeline.vae = vae
 pipeline = pipeline.to('cuda')
 
-output_root = Path('/data/yuval/tml_experiments/photoguard_results_img2img')
+output_root = Path('./photoguard_results_img2img')
 output_root.mkdir(exist_ok=True, parents=True)
 
 image_paths = [p for p in Path('./images').glob("*") if p.suffix in ['.jpg', '.png', '.jpeg']]

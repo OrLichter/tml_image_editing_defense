@@ -18,7 +18,7 @@ class Config:
 
 @pyrallis.wrap()
 def main(cfg: Config):
-	output_root = Path('/data/yuval/tml_experiments/final_experiments')
+	output_root = Path('./final_experiments')
 	output_root.mkdir(exist_ok=True, parents=True)
 	
 	image_paths = [p for p in Path('./images').glob("*") if p.suffix in ['.jpg', '.png', '.jpeg']]
